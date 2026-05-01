@@ -1,21 +1,35 @@
 # SO-101 Arm Guide
 
-Hardware: SO-101 follower + SO-101 leader · Feetech STS3215 servos · Mac
+Hardware: SO-101 follower + SO-101 leader · Feetech STS3215 servos · Mac M1
+
+---
+
+## First-Time Install
+
+Clone and install dependencies (one-time):
+
+```bash
+cd ~/Documents/GitHub
+git clone https://github.com/ayushgawai/so101-lerobot.git
+cd so101-lerobot
+uv sync --extra feetech --extra viz --extra dataset
+```
 
 ---
 
 ## Environment
 
-Activate once per terminal session before running any `lerobot-*` command:
+Run from inside the repo directory. Activate the venv once per terminal session:
 
 ```bash
-source /Users/spartan/Documents/GitHub/lerobot/.venv/bin/activate
+cd ~/Documents/GitHub/so101-lerobot
+source .venv/bin/activate
 ```
 
 To make it permanent (never think about it again):
 
 ```bash
-echo 'source /Users/spartan/Documents/GitHub/lerobot/.venv/bin/activate' >> ~/.zshrc
+echo 'source ~/Documents/GitHub/so101-lerobot/.venv/bin/activate' >> ~/.zshrc
 ```
 
 ---
@@ -88,9 +102,11 @@ lerobot-calibrate --teleop.type=so101_leader --teleop.port=/dev/cu.usbmodem5B3E1
 3. Open and close the gripper/trigger fully
 4. Press Enter to save
 
-Calibration files saved to:
-- `~/.cache/huggingface/lerobot/calibration/robots/so_follower/my_so_arm.json`
-- `~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/my_so_arm.json`
+Calibration files are saved in two places:
+- **Repo (committed to git):** `./calibration/robots/so_follower/my_so_arm.json` and `./calibration/teleoperators/so_leader/my_so_arm.json`
+- **HF cache:** `~/.cache/huggingface/lerobot/calibration/...`
+
+The commands below use the repo-local calibration files so they work on any machine that clones this repo.
 
 ---
 
@@ -112,10 +128,10 @@ for i in range(5):
 
 Current setup:
 
-| Camera | Index | Position |
-|--------|-------|----------|
-| gripper_cam | 0 | Mounted on wrist, faces workspace |
-| top_cam | 1 | Fixed above/behind arm, sees full workspace |
+| Camera      | Index | Position                              |
+|-------------|-------|---------------------------------------|
+| gripper_cam | 0     | Mounted on wrist, faces workspace     |
+| top_cam     | 1     | Fixed above/behind arm, sees full workspace |
 
 ### Preview both cameras live
 
@@ -162,9 +178,11 @@ lerobot-teleoperate \
   --robot.type=so101_follower \
   --robot.port=/dev/cu.usbmodem5B3E1225231 \
   --robot.id=my_so_arm \
+  --robot.calibration_dir=./calibration/robots/so_follower \
   --teleop.type=so101_leader \
   --teleop.port=/dev/cu.usbmodem5B3E1218771 \
-  --teleop.id=my_so_arm
+  --teleop.id=my_so_arm \
+  --teleop.calibration_dir=./calibration/teleoperators/so_leader
 ```
 
 ### With both cameras + live Rerun viewer
@@ -174,30 +192,21 @@ lerobot-teleoperate \
   --robot.type=so101_follower \
   --robot.port=/dev/cu.usbmodem5B3E1225231 \
   --robot.id=my_so_arm \
+  --robot.calibration_dir=./calibration/robots/so_follower \
   --robot.cameras="{gripper_cam: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, top_cam: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
   --teleop.type=so101_leader \
   --teleop.port=/dev/cu.usbmodem5B3E1218771 \
   --teleop.id=my_so_arm \
+  --teleop.calibration_dir=./calibration/teleoperators/so_leader \
   --display_data=true
 ```
 
-Open the Rerun viewer in a second terminal:
-
-```bash
-rerun rerun+grpc://127.0.0.1:9876
-```
-
+The Rerun window opens **automatically** when `--display_data=true` is set.
 Press `Ctrl+C` to stop.
 
 ---
 
 ## Record a Dataset
-
-Install required extra first (one-time):
-
-```bash
-uv sync --extra dataset
-```
 
 Login to Hugging Face (one-time):
 
@@ -214,19 +223,21 @@ lerobot-record \
   --robot.type=so101_follower \
   --robot.port=/dev/cu.usbmodem5B3E1225231 \
   --robot.id=my_so_arm \
+  --robot.calibration_dir=./calibration/robots/so_follower \
   --robot.cameras="{gripper_cam: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, top_cam: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
   --teleop.type=so101_leader \
   --teleop.port=/dev/cu.usbmodem5B3E1218771 \
   --teleop.id=my_so_arm \
-  --dataset.repo_id=spartan/so101-pick-cube \
-  --dataset.num_episodes=10 \
-  --dataset.single_task="Pick up the cube"
+  --teleop.calibration_dir=./calibration/teleoperators/so_leader \
+  --dataset.repo_id=ayushgawai/so101-pick-cube \
+  --dataset.num_episodes=30 \
+  --dataset.single_task="Pick up the cube and place it in the bowl"
 ```
 
 - `repo_id` format: `<hf_username>/<dataset_name>` — dataset is created automatically on HF
 - `num_episodes`: number of demonstrations to record
 - `single_task`: plain text description of what the arm is doing
-- Press space to start/stop each episode, Ctrl+C to finish early
+- Press **Space** to start/stop each episode, **Ctrl+C** to finish early
 
 ---
 
