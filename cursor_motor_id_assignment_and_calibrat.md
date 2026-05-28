@@ -123,7 +123,10 @@ The script will:
 uv run lerobot-calibrate --robot.type=so101_follower --robot.port=/dev/tty.usbserial-XXXX
 uv run lerobot-calibrate --teleop.type=so101_leader  --teleop.port=/dev/tty.usbserial-YYYY
 ```
+example:
 
+/dev/cu.usbmodem5B3E1225231 --> follower arm
+/dev/cu.usbmodem5B3E1218771 --> leader arm
 ---
 
 ## About "hardware enforcement" (firmware-level)
