@@ -11,6 +11,8 @@ A working setup of HuggingFace LeRobot for the SO-101 robot arm, including a per
 | File | Description |
 |------|-------------|
 | `so-arm-guide.md` | Full setup guide — calibration, teleoperation, cameras, recording, and debug reference |
+| `docker/README.md` | Docker Compose setup — dev shell, hardware profile, GPU profile |
+| `docker-compose.yml` | Cross-platform services (`lerobot`, `lerobot-hw`, `lerobot-gpu`) |
 | `fix_motor_ids.py` | Standalone script to diagnose and fix Feetech STS3215 motor ID collisions |
 | `src/lerobot/motors/motors_bus.py` | Patched with EEPROM Lock=1 fix to prevent motor IDs reverting after reboot |
 
@@ -32,6 +34,20 @@ A working setup of HuggingFace LeRobot for the SO-101 robot arm, including a per
 - SO-101 leader arm
 - 2x USB cameras (gripper-mounted + top/overview)
 - Mac M1
+
+---
+
+## Docker (cross-platform)
+
+Reproducible environment without local Python/torch setup (Mac M-series, Windows, Linux):
+
+```bash
+cp .env.example .env
+docker compose build
+docker compose run --rm lerobot lerobot-info
+```
+
+Hardware teleop on **Linux** uses the `hardware` profile; on **Mac/Windows**, use Docker for deps and run `lerobot-*` on the host venv — see [docker/README.md](docker/README.md).
 
 ---
 

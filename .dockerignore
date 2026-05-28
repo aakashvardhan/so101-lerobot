@@ -1,0 +1,34 @@
+# Virtualenv and caches (use image-built .venv via named volume)
+.venv
+__pycache__
+*.py[cod]
+*$py.class
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Git and IDE
+.git
+.gitignore
+.cursor
+.vscode
+.idea
+
+# Local env and secrets
+.env
+.env.*
+!.env.example
+
+# Large / generated artifacts
+outputs/
+wandb/
+*.egg-info
+dist/
+build/
+*.rrd
+
+# OS
+.DS_Store
+Thumbs.db

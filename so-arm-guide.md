@@ -15,6 +15,20 @@ cd so101-lerobot
 uv sync --extra feetech --extra viz --extra dataset
 ```
 
+### Docker alternative (same extras, no local Python)
+
+```bash
+cp .env.example .env
+docker compose build
+docker compose run --rm lerobot lerobot-info
+```
+
+- **Dev / tools:** `docker compose run --rm lerobot` (interactive shell)
+- **Teleop + record on Linux:** `docker compose --profile hardware run --rm lerobot-hw bash docker/scripts/teleop.sh`
+- **Mac / Windows:** Docker for dependencies; run `lerobot-teleoperate` etc. on the host with `uv sync` above (USB/cameras do not pass through Docker Desktop reliably)
+
+Full details: [docker/README.md](docker/README.md)
+
 ---
 
 ## Environment

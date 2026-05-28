@@ -1,0 +1,96 @@
+# SO-101 LeRobot — cross-platform Docker Compose
+# Dev:       docker compose run --rm lerobot
+# Hardware:  docker compose --profile hardware run --rm lerobot-hw bash docker/scripts/teleop.sh
+# GPU:       docker compose --profile gpu run --rm lerobot-gpu
+
+name: so101-lerobot
+
+x-lerobot-common: &lerobot-common
+  image: so101-lerobot:cpu
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  stdin_open: true
+  tty: true
+  working_dir: /lerobot
+  volumes:
+    - .:/lerobot
+    # Keep the image-built venv when bind-mounting the repo from the host
+    - lerobot-venv:/lerobot/.venv
+    - hf-cache:/home/user_lerobot/.cache/huggingface
+  ports:
+    - "${RERUN_PORT:-9876}:9876"
+    - "${RERUN_GRPC_PORT:-8812}:8812"
+  environment:
+    HF_TOKEN: ${HF_TOKEN:-}
+    RERUN_HOST: ${RERUN_HOST:-host.docker.internal}
+    ROBOT_PORT: ${ROBOT_PORT:-/dev/ttyACM0}
+    LEADER_PORT: ${LEADER_PORT:-/dev/ttyACM1}
+    ROBOT_ID: ${ROBOT_ID:-my_so_arm}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  entrypoint: ["/lerobot/docker/entrypoint.sh"]
+
+services:
+  lerobot:
+    <<: *lerobot-common
+    command: ["bash"]
+
+  lerobot-hw:
+    <<: *lerobot-common
+    profiles: [hardware]
+    privileged: true
+    devices:
+      - "${ROBOT_DEVICE:-/dev/ttyACM0}:${ROBOT_DEVICE:-/dev/ttyACM0}"
+      - "${LEADER_DEVICE:-/dev/ttyACM1}:${LEADER_DEVICE:-/dev/ttyACM1}"
+      - "${GRIPPER_CAM_DEVICE:-/dev/video0}:${GRIPPER_CAM_DEVICE:-/dev/video0}"
+      - "${TOP_CAM_DEVICE:-/dev/video1}:${TOP_CAM_DEVICE:-/dev/video1}"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      RERUN_HOST: ${RERUN_HOST:-host.docker.internal}
+      ROBOT_PORT: ${ROBOT_PORT:-/dev/ttyACM0}
+      LEADER_PORT: ${LEADER_PORT:-/dev/ttyACM1}
+      ROBOT_ID: ${ROBOT_ID:-my_so_arm}
+      LEROBOT_SHOW_PORTS: ${LEROBOT_SHOW_PORTS:-1}
+    command: ["bash"]
+
+  lerobot-gpu:
+    profiles: [gpu]
+    image: so101-lerobot:gpu
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gpu
+      args:
+        LEROBOT_EXTRAS: ${LEROBOT_EXTRAS:-training}
+    stdin_open: true
+    tty: true
+    working_dir: /lerobot
+    volumes:
+      - .:/lerobot
+      - lerobot-venv-gpu:/lerobot/.venv
+      - hf-cache:/home/user_lerobot/.cache/huggingface
+      - ./outputs:/lerobot/outputs
+    ports:
+      - "${RERUN_PORT:-9876}:9876"
+      - "${RERUN_GRPC_PORT:-8812}:8812"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      RERUN_HOST: ${RERUN_HOST:-host.docker.internal}
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    entrypoint: ["/lerobot/docker/entrypoint.sh"]
+    command: ["bash"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  hf-cache:
+  lerobot-venv:
+  lerobot-venv-gpu:

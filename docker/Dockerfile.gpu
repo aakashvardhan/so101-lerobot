@@ -1,0 +1,81 @@
+# SO-101 LeRobot — GPU image (training / eval on NVIDIA hosts)
+# Build: docker compose --profile gpu build lerobot-gpu
+# Run:   docker compose --profile gpu run --rm lerobot-gpu
+
+ARG CUDA_VERSION=12.4.1
+ARG OS_VERSION=22.04
+FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu${OS_VERSION}
+
+ARG PYTHON_VERSION=3.12
+# Optional comma-separated extra names, e.g. "pi,diffusion"
+ARG LEROBOT_EXTRAS=training
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    MUJOCO_GL=egl \
+    PATH=/lerobot/.venv/bin:$PATH \
+    CUDA_VISIBLE_DEVICES=0 \
+    DEVICE=cuda
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    build-essential \
+    git \
+    curl \
+    ca-certificates \
+    libglib2.0-0 \
+    libgl1-mesa-glx \
+    libegl1-mesa \
+    ffmpeg \
+    libusb-1.0-0-dev \
+    speech-dispatcher \
+    libgeos-dev \
+    portaudio19-dev \
+    cmake \
+    pkg-config \
+    ninja-build \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    python${PYTHON_VERSION} \
+    python${PYTHON_VERSION}-venv \
+    python${PYTHON_VERSION}-dev \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv \
+    && useradd --create-home --shell /bin/bash user_lerobot \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /lerobot
+RUN chown -R user_lerobot:user_lerobot /lerobot
+
+COPY --chown=user_lerobot:user_lerobot pyproject.toml uv.lock README.md ./
+COPY --chown=user_lerobot:user_lerobot src/ src/
+
+USER user_lerobot
+
+ENV HOME=/home/user_lerobot \
+    HF_HOME=/home/user_lerobot/.cache/huggingface \
+    HF_LEROBOT_HOME=/home/user_lerobot/.cache/huggingface/lerobot \
+    TORCH_HOME=/home/user_lerobot/.cache/torch \
+    TRITON_CACHE_DIR=/home/user_lerobot/.cache/triton
+
+RUN uv venv --python python${PYTHON_VERSION} \
+    && uv sync --locked \
+    --extra feetech \
+    --extra viz \
+    --extra dataset \
+    --extra training
+
+# Install optional policy extras passed at build time (e.g. --build-arg LEROBOT_EXTRAS=training,pi)
+ARG LEROBOT_EXTRAS=training
+RUN extras="$(echo "${LEROBOT_EXTRAS}" | tr ',' ' ')"; \
+    for extra in ${extras}; do \
+      case "${extra}" in feetech|viz|dataset|training) continue ;; esac; \
+      uv sync --locked --extra "${extra}"; \
+    done
+
+COPY --chown=user_lerobot:user_lerobot . .
+
+RUN chmod +x /lerobot/docker/entrypoint.sh
+
+ENTRYPOINT ["/lerobot/docker/entrypoint.sh"]
+CMD ["bash"]
