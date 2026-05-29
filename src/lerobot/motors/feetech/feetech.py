@@ -21,7 +21,14 @@ from typing import TYPE_CHECKING
 from lerobot.utils.import_utils import _feetech_sdk_available, require_package
 
 from ..encoding_utils import decode_sign_magnitude, encode_sign_magnitude
-from ..motors_bus import Motor, MotorCalibration, NameOrID, SerialMotorsBus, Value, get_address
+from ..motors_bus import (
+    Motor,
+    MotorCalibration,
+    NameOrID,
+    SerialMotorsBus,
+    Value,
+    get_address,
+)
 from .tables import (
     FIRMWARE_MAJOR_VERSION,
     FIRMWARE_MINOR_VERSION,

@@ -533,9 +533,21 @@ class SerialMotorsBus(MotorsBusBase):
             elif handshake:
                 self._handshake()
         except (FileNotFoundError, OSError, serial.SerialException) as e:
+            bridge_hint = ""
+            if (
+                self.port.startswith("/tmp/tty")
+                and ("No such file or directory" in str(e) or isinstance(e, FileNotFoundError))
+            ):
+                bridge_hint = (
+                    "\nDetected a missing temporary PTY path. "
+                    "If you are using Docker bridge ports, start the PTY socat bridges first:\n"
+                    "socat -d -d PTY,link=/tmp/ttyFOLLOWER,raw,echo=0,wait-slave TCP:host.docker.internal:5000 &\n"
+                    "socat -d -d PTY,link=/tmp/ttyLEADER,raw,echo=0,wait-slave TCP:host.docker.internal:5001 &\n"
+                )
             raise ConnectionError(
                 f"\nCould not connect on port '{self.port}'. Make sure you are using the correct port."
                 "\nTry running `lerobot-find-port`\n"
+                f"{bridge_hint}"
             ) from e
 
     @abc.abstractmethod

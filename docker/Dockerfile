@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     ca-certificates \
+    socat \
     libglib2.0-0 \
     libegl1-mesa-dev \
     libgl1-mesa-glx \
