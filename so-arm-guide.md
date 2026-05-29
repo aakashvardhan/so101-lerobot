@@ -12,7 +12,8 @@ Clone and install dependencies (one-time):
 cd ~/Documents/GitHub
 git clone https://github.com/ayushgawai/so101-lerobot.git
 cd so101-lerobot
-uv sync --extra feetech --extra viz --extra dataset
+./scripts/sync.sh --extra feetech --extra viz --extra dataset
+# (runs uv sync + macOS .pth fix; installs auto-fix on `source .venv/bin/activate`)
 ```
 
 ---
@@ -97,10 +98,12 @@ lerobot-calibrate --teleop.type=so101_leader --teleop.port=/dev/cu.usbmodem5B3E1
 ```
 
 **During calibration:**
-1. Move arm to middle of range → press Enter
-2. Move every joint (except `wrist_roll`) through its **full range**, slowly
-3. Open and close the gripper/trigger fully
+1. Move arm to middle of range → press Enter (center every joint, including **`wrist_roll`**)
+2. Move **all** joints through their **full range**, slowly — you should see `wrist_roll` in the live `MIN | POS | MAX` table (same as the [LeRobot SO-101 tutorial](https://www.youtube.com/watch?v=-tkEMLOLEwo))
+3. Rotate `wrist_roll` through its mechanical limits; open and close the gripper/trigger fully
 4. Press Enter to save
+
+This repo records `wrist_roll` min/max like the tutorial. Upstream `main` still skips the sweep and hardcodes `0`–`4095`; we include it so leader/follower zero points align. `configure_motors()` runs before the sweep so STS3215 servos use single-turn feedback (LeRobot [#3373](https://github.com/huggingface/lerobot/pull/3373)).
 
 Calibration files are saved in two places:
 - **Repo (committed to git):** `./calibration/robots/so_follower/my_so_arm.json` and `./calibration/teleoperators/so_leader/my_so_arm.json`
@@ -244,6 +247,28 @@ lerobot-record \
 ---
 
 # Debug Reference
+
+---
+
+## `ModuleNotFoundError: No module named 'lerobot'`
+
+**Symptom:** `lerobot-teleoperate` (or any `lerobot-*` CLI) fails even though the venv is activated and `pip show lerobot` looks fine.
+
+**Cause (macOS):** The editable-install `.pth` file (`.venv/lib/python3.12/site-packages/__editable__.lerobot-*.pth`) has the `UF_HIDDEN` file flag. Python 3.12+ **silently skips** hidden `.pth` files, so `src/` is never added to `sys.path`.
+
+**Fix:**
+
+```bash
+python3 scripts/fix_editable_venv.py
+source .venv/bin/activate   # re-activate so hook + PATH refresh apply
+python3 -c "import lerobot; print('OK')"
+```
+
+Use `python3` (not bare `python` if your shell aliases it to system Python). The fix wraps `.venv/bin/python` so both work after re-activate.
+
+Or use `./scripts/sync.sh` instead of `uv sync` (runs the fix automatically).
+
+`uv sync` marks **all** `site-packages/*.pth` as hidden on macOS, not only `__editable__*.pth`.
 
 ---
 

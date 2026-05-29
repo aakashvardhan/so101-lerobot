@@ -94,21 +94,18 @@ class SOLeader(Teleoperator):
 
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
+        self.bus.configure_motors()
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
-        full_turn_motor = "wrist_roll"
-        unknown_range_motors = [motor for motor in self.bus.motors if motor != full_turn_motor]
         print(
-            f"Move all joints except '{full_turn_motor}' sequentially through their "
+            "Move all joints (including wrist_roll) sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        range_mins[full_turn_motor] = 0
-        range_maxes[full_turn_motor] = 4095
+        range_mins, range_maxes = self.bus.record_ranges_of_motion()
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():

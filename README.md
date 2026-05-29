@@ -38,6 +38,10 @@ A working setup of HuggingFace LeRobot for the SO-101 robot arm, including a per
 ## Quick Start
 
 ```bash
+# Install deps (use sync.sh on macOS — fixes hidden .pth after uv sync)
+./scripts/sync.sh --extra feetech --extra viz --extra dataset
+# Or: uv sync ... && python scripts/fix_editable_venv.py
+
 # Activate environment
 source .venv/bin/activate
 
@@ -46,7 +50,11 @@ lerobot-calibrate --robot.type=so101_follower --robot.port=/dev/cu.usbmodem5B3E1
 
 # Calibrate leader
 lerobot-calibrate --teleop.type=so101_leader --teleop.port=/dev/cu.usbmodem5B3E1218771 --teleop.id=my_so_arm
+```
 
+**`wrist_roll` (motor ID 5)** is calibrated like the other joints (included in the live `MIN | POS | MAX` table during the range sweep, matching the LeRobot tutorial). Sweep it through its mechanical limits after centering the arm. See `so-arm-guide.md` → **Calibrate**.
+
+```bash
 # Teleoperate with cameras
 lerobot-teleoperate \
   --robot.type=so101_follower \
