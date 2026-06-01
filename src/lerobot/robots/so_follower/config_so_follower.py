@@ -42,12 +42,19 @@ class SOFollowerConfig:
     use_degrees: bool = True
 
 
-@RobotConfig.register_subclass("so101_follower")
 @RobotConfig.register_subclass("so100_follower")
 @dataclass
-class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
+class SO100FollowerRobotConfig(RobotConfig, SOFollowerConfig):
     pass
 
 
-SO100FollowerConfig = SOFollowerRobotConfig
-SO101FollowerConfig = SOFollowerRobotConfig
+@RobotConfig.register_subclass("so101_follower")
+@dataclass
+class SO101FollowerRobotConfig(RobotConfig, SOFollowerConfig):
+    pass
+
+
+SO100FollowerConfig = SO100FollowerRobotConfig
+SO101FollowerConfig = SO101FollowerRobotConfig
+# Backward compatibility (defaults to SO-100 registration)
+SOFollowerRobotConfig = SO100FollowerRobotConfig

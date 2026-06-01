@@ -29,9 +29,21 @@ from lerobot.utils.decorators import check_if_already_connected, check_if_not_co
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .config_so_follower import SOFollowerRobotConfig
+from .config_so_follower import SO100FollowerRobotConfig, SO101FollowerRobotConfig, SOFollowerConfig
 
 logger = logging.getLogger(__name__)
+
+# SO-101 follower motor layout (see so101.md)
+SO101_FOLLOWER_JOINT_TABLE = """
+Follower-Arm Axis     Motor  Gear Ratio
+--------------------  -----  ----------
+Base / Shoulder Pan      1   1 / 345
+Shoulder Lift            2   1 / 345
+Elbow Flex               3   1 / 345
+Wrist Flex               4   1 / 345
+Wrist Roll               5   1 / 345
+Gripper                  6   1 / 345
+"""
 
 
 class SOFollower(Robot):
@@ -40,10 +52,10 @@ class SOFollower(Robot):
     Designed to be subclassed with a per-hardware-model `config_class` and `name`.
     """
 
-    config_class = SOFollowerRobotConfig
+    config_class = SO100FollowerRobotConfig
     name = "so_follower"
 
-    def __init__(self, config: SOFollowerRobotConfig):
+    def __init__(self, config: SOFollowerConfig):
         super().__init__(config)
         self.config = config
         # choose normalization mode depending on config if available
@@ -108,6 +120,25 @@ class SOFollower(Robot):
     def is_calibrated(self) -> bool:
         return self.bus.is_calibrated
 
+    @property
+    def full_turn_motors(self) -> list[str]:
+        """Motors that can rotate continuously; use full encoder span instead of recorded range."""
+        return ["wrist_roll"]
+
+    def _print_range_of_motion_instructions(self, motors_to_record: list[str]) -> None:
+        excluded = [m for m in self.bus.motors if m not in motors_to_record]
+        if excluded:
+            print(
+                f"Move all joints except {', '.join(repr(m) for m in excluded)} sequentially through their "
+                "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
+            )
+        else:
+            joint_list = ", ".join(motors_to_record)
+            print(
+                f"Move all joints ({joint_list}) sequentially through their entire ranges of motion.\n"
+                "Recording positions. Press ENTER to stop..."
+            )
+
     def calibrate(self) -> None:
         if self.calibration:
             # Calibration file exists, ask user whether to use it or run new calibration
@@ -127,16 +158,12 @@ class SOFollower(Robot):
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
-        # Attempt to call record_ranges_of_motion with a reduced motor set when appropriate.
-        full_turn_motor = "wrist_roll"
-        unknown_range_motors = [motor for motor in self.bus.motors if motor != full_turn_motor]
-        print(
-            f"Move all joints except '{full_turn_motor}' sequentially through their "
-            "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
-        )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        range_mins[full_turn_motor] = 0
-        range_maxes[full_turn_motor] = 4095
+        motors_to_record = [motor for motor in self.bus.motors if motor not in self.full_turn_motors]
+        self._print_range_of_motion_instructions(motors_to_record)
+        range_mins, range_maxes = self.bus.record_ranges_of_motion(motors_to_record)
+        for motor in self.full_turn_motors:
+            range_mins[motor] = 0
+            range_maxes[motor] = 4095
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():
@@ -230,4 +257,22 @@ class SOFollower(Robot):
 
 
 SO100Follower = SOFollower
-SO101Follower = SOFollower
+
+
+class SO101Follower(SOFollower):
+    """SO-101 follower: all six joints (including wrist_roll) are range-calibrated."""
+
+    config_class = SO101FollowerRobotConfig
+
+    @property
+    def full_turn_motors(self) -> list[str]:
+        return []
+
+    def _print_range_of_motion_instructions(self, motors_to_record: list[str]) -> None:
+        print("Calibrate each follower joint through its full range of motion:")
+        print(SO101_FOLLOWER_JOINT_TABLE)
+        print(
+            "Move every joint above (including wrist_roll) through its entire range, slowly.\n"
+            "Open and close the gripper fully.\n"
+            "Recording positions. Press ENTER to stop..."
+        )
