@@ -25,7 +25,7 @@ from lerobot.motors.feetech import (
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
-from .config_so_leader import SOLeaderTeleopConfig
+from .config_so_leader import SO100LeaderTeleopConfig, SO101LeaderTeleopConfig, SOLeaderTeleopConfig
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +188,8 @@ SO100Leader = SOLeader
 
 class SO101Leader(SOLeader):
     """SO-101 leader: all six joints (including wrist_roll) are range-calibrated."""
+
+    config_class = SO101LeaderTeleopConfig
 
     @property
     def full_turn_motors(self) -> list[str]:

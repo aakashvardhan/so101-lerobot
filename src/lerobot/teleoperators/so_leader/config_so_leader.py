@@ -30,12 +30,19 @@ class SOLeaderConfig:
     use_degrees: bool = True
 
 
-@TeleoperatorConfig.register_subclass("so101_leader")
 @TeleoperatorConfig.register_subclass("so100_leader")
 @dataclass
-class SOLeaderTeleopConfig(TeleoperatorConfig, SOLeaderConfig):
+class SO100LeaderTeleopConfig(TeleoperatorConfig, SOLeaderConfig):
     pass
 
 
-SO100LeaderConfig = SOLeaderTeleopConfig
-SO101LeaderConfig = SOLeaderTeleopConfig
+@TeleoperatorConfig.register_subclass("so101_leader")
+@dataclass
+class SO101LeaderTeleopConfig(TeleoperatorConfig, SOLeaderConfig):
+    pass
+
+
+SO100LeaderConfig = SO100LeaderTeleopConfig
+SO101LeaderConfig = SO101LeaderTeleopConfig
+# Backward compatibility (defaults to SO-100 registration)
+SOLeaderTeleopConfig = SO100LeaderTeleopConfig
