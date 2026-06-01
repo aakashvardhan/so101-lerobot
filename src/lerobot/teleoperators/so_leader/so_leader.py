@@ -29,6 +29,18 @@ from .config_so_leader import SOLeaderTeleopConfig
 
 logger = logging.getLogger(__name__)
 
+# SO-101 leader motor layout (see so101.md)
+SO101_LEADER_JOINT_TABLE = """
+Leader-Arm Axis       Motor  Gear Ratio
+--------------------  -----  ----------
+Base / Shoulder Pan      1   1 / 191
+Shoulder Lift            2   1 / 345
+Elbow Flex               3   1 / 191
+Wrist Flex               4   1 / 147
+Wrist Roll               5   1 / 147
+Gripper                  6   1 / 147
+"""
+
 
 class SOLeader(Teleoperator):
     """Generic SO leader base for SO-100/101/10X teleoperators."""
@@ -81,6 +93,25 @@ class SOLeader(Teleoperator):
     def is_calibrated(self) -> bool:
         return self.bus.is_calibrated
 
+    @property
+    def full_turn_motors(self) -> list[str]:
+        """Motors that can rotate continuously; use full encoder span instead of recorded range."""
+        return ["wrist_roll"]
+
+    def _print_range_of_motion_instructions(self, motors_to_record: list[str]) -> None:
+        excluded = [m for m in self.bus.motors if m not in motors_to_record]
+        if excluded:
+            print(
+                f"Move all joints except {', '.join(repr(m) for m in excluded)} sequentially through their "
+                "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
+            )
+        else:
+            joint_list = ", ".join(motors_to_record)
+            print(
+                f"Move all joints ({joint_list}) sequentially through their entire ranges of motion.\n"
+                "Recording positions. Press ENTER to stop..."
+            )
+
     def calibrate(self) -> None:
         if self.calibration:
             # Calibration file exists, ask user whether to use it or run new calibration
@@ -100,15 +131,12 @@ class SOLeader(Teleoperator):
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
-        full_turn_motor = "wrist_roll"
-        unknown_range_motors = [motor for motor in self.bus.motors if motor != full_turn_motor]
-        print(
-            f"Move all joints except '{full_turn_motor}' sequentially through their "
-            "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
-        )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        range_mins[full_turn_motor] = 0
-        range_maxes[full_turn_motor] = 4095
+        motors_to_record = [motor for motor in self.bus.motors if motor not in self.full_turn_motors]
+        self._print_range_of_motion_instructions(motors_to_record)
+        range_mins, range_maxes = self.bus.record_ranges_of_motion(motors_to_record)
+        for motor in self.full_turn_motors:
+            range_mins[motor] = 0
+            range_maxes[motor] = 4095
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():
@@ -156,4 +184,20 @@ class SOLeader(Teleoperator):
 
 
 SO100Leader = SOLeader
-SO101Leader = SOLeader
+
+
+class SO101Leader(SOLeader):
+    """SO-101 leader: all six joints (including wrist_roll) are range-calibrated."""
+
+    @property
+    def full_turn_motors(self) -> list[str]:
+        return []
+
+    def _print_range_of_motion_instructions(self, motors_to_record: list[str]) -> None:
+        print("Calibrate each leader joint through its full range of motion:")
+        print(SO101_LEADER_JOINT_TABLE)
+        print(
+            "Move every joint above (including wrist_roll) through its entire range, slowly.\n"
+            "Open and close the gripper/trigger fully.\n"
+            "Recording positions. Press ENTER to stop..."
+        )

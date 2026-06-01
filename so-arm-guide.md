@@ -98,7 +98,7 @@ lerobot-calibrate --teleop.type=so101_leader --teleop.port=/dev/cu.usbmodem5B3E1
 
 **During calibration:**
 1. Move arm to middle of range → press Enter
-2. Move every joint (except `wrist_roll`) through its **full range**, slowly
+2. Move joints through full range, slowly — **follower:** all except `wrist_roll`; **leader:** all six including `wrist_roll` (joint table is printed by the script)
 3. Open and close the gripper/trigger fully
 4. Press Enter to save
 

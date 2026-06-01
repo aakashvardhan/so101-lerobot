@@ -291,6 +291,16 @@ lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 
 # ---------------- Tool Configurations ----------------
+# CUDA PyTorch (Windows/Linux with NVIDIA GPU). Remove or comment out for CPU-only installs.
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+
 [tool.setuptools.dynamic]
 readme = {file = "README.md"}
 
