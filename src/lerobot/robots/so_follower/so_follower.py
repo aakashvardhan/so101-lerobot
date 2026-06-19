@@ -194,6 +194,12 @@ class SOFollower(Robot):
                     self.bus.write("Max_Torque_Limit", motor, 500)  # 50% of max torque to avoid burnout
                     self.bus.write("Protection_Current", motor, 250)  # 50% of max current to avoid burnout
                     self.bus.write("Overload_Torque", motor, 25)  # 25% torque when overloaded
+                else:
+                    # Arm joints bear load, so keep them stronger than the gripper but still
+                    # trip the overload protection (and back off) before stalling at full torque.
+                    self.bus.write("Max_Torque_Limit", motor, 1000)  # full holding torque
+                    self.bus.write("Protection_Current", motor, 500)  # trip at ~full rated current
+                    self.bus.write("Overload_Torque", motor, 40)  # reduce to 40% when overloaded
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):

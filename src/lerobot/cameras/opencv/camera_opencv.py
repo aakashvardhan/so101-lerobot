@@ -205,6 +205,10 @@ class OpenCVCamera(Camera):
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
 
+        # Keep only the freshest frame in the driver queue. Without this, backends like MSMF
+        # buffer several frames, so videocapture.read() returns stale frames and latency grows.
+        self.videocapture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
         default_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         default_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 

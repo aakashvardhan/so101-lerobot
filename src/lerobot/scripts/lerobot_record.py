@@ -643,7 +643,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     dataset.clear_episode_buffer()
                     continue
 
-                dataset.save_episode()
+                dataset.save_episode(parallel_encoding=False)
                 recorded_episodes += 1
     finally:
         log_say("Stop recording", cfg.play_sounds, blocking=True)

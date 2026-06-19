@@ -13,6 +13,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 from torch.optim import Optimizer
@@ -62,8 +65,23 @@ def update_last_checkpoint(checkpoint_dir: Path) -> Path:
     last_checkpoint_dir = checkpoint_dir.parent / LAST_CHECKPOINT_LINK
     if last_checkpoint_dir.is_symlink():
         last_checkpoint_dir.unlink()
+    elif last_checkpoint_dir.is_dir():
+        # A junction/copy from a previous run; clear it before re-linking.
+        shutil.rmtree(last_checkpoint_dir, ignore_errors=True)
     relative_target = checkpoint_dir.relative_to(checkpoint_dir.parent)
-    last_checkpoint_dir.symlink_to(relative_target)
+    try:
+        last_checkpoint_dir.symlink_to(relative_target)
+    except OSError:
+        # Windows blocks symlink creation without admin/Developer Mode (WinError 1314).
+        # Fall back to a directory junction, which requires no special privilege.
+        if os.name == "nt":
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(last_checkpoint_dir), str(checkpoint_dir)],
+                check=True,
+                capture_output=True,
+            )
+        else:
+            raise
 
 
 def save_checkpoint(

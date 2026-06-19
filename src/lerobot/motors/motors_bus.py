@@ -555,7 +555,16 @@ class SerialMotorsBus(MotorsBusBase):
         if disable_torque:
             self.port_handler.clearPort()
             self.port_handler.is_using = False
-            self.disable_torque(num_retry=5)
+            # Best-effort, per-motor: a latched hardware fault (e.g. Overload error) on one
+            # motor must not prevent disabling torque on the others or closing the port.
+            for motor in self.motors:
+                try:
+                    self.disable_torque(motor, num_retry=5)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to disable torque on motor '{motor}' during disconnect "
+                        f"(likely a latched hardware fault); closing the port anyway: {e}"
+                    )
 
         self.port_handler.closePort()
         logger.debug(f"{self.__class__.__name__} disconnected.")
