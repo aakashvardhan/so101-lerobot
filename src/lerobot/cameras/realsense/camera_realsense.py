@@ -573,6 +573,39 @@ class RealSenseCamera(Camera):
 
         return frame
 
+    @check_if_not_connected
+    def read_depth_latest(self, max_age_ms: int = 500) -> NDArray[Any]:
+        """Return the most recent depth frame immediately (non-blocking).
+
+        Returns raw uint16 depth map in millimeters, shape (height, width).
+
+        Raises:
+            TimeoutError: If the latest frame is older than `max_age_ms`.
+            RuntimeError: If depth stream is not enabled or no frames captured yet.
+        """
+        if not self.use_depth:
+            raise RuntimeError(
+                f"Depth stream is not enabled for {self}. Set use_depth=True in config."
+            )
+
+        if self.thread is None or not self.thread.is_alive():
+            raise RuntimeError(f"{self} read thread is not running.")
+
+        with self.frame_lock:
+            depth_frame = self.latest_depth_frame
+            timestamp = self.latest_timestamp
+
+        if depth_frame is None or timestamp is None:
+            raise RuntimeError(f"{self} has not captured any depth frames yet.")
+
+        age_ms = (time.perf_counter() - timestamp) * 1e3
+        if age_ms > max_age_ms:
+            raise TimeoutError(
+                f"{self} latest depth frame is too old: {age_ms:.1f} ms (max allowed: {max_age_ms} ms)."
+            )
+
+        return depth_frame
+
     # NOTE(Steven): Missing implementation for depth for now
     @check_if_not_connected
     def read_latest(self, max_age_ms: int = 500) -> NDArray[Any]:

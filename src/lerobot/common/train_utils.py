@@ -65,9 +65,15 @@ def update_last_checkpoint(checkpoint_dir: Path) -> Path:
     last_checkpoint_dir = checkpoint_dir.parent / LAST_CHECKPOINT_LINK
     if last_checkpoint_dir.is_symlink():
         last_checkpoint_dir.unlink()
-    elif last_checkpoint_dir.is_dir():
-        # A junction/copy from a previous run; clear it before re-linking.
-        shutil.rmtree(last_checkpoint_dir, ignore_errors=True)
+    elif last_checkpoint_dir.exists() or last_checkpoint_dir.is_dir():
+        # On Windows a junction is NOT a symlink, so the branch above misses it and
+        # shutil.rmtree can't remove a junction. os.rmdir removes the junction link
+        # (or an empty dir) without touching its target; fall back to rmtree for a
+        # real directory copied from a previous run.
+        try:
+            os.rmdir(last_checkpoint_dir)
+        except OSError:
+            shutil.rmtree(last_checkpoint_dir, ignore_errors=True)
     relative_target = checkpoint_dir.relative_to(checkpoint_dir.parent)
     try:
         last_checkpoint_dir.symlink_to(relative_target)

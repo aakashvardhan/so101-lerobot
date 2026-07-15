@@ -18,6 +18,9 @@ import logging
 import time
 from functools import cached_property
 
+import cv2
+import numpy as np
+
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
@@ -80,9 +83,13 @@ class SOFollower(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
-        }
+        ft = {}
+        for cam in self.cameras:
+            cfg = self.config.cameras[cam]
+            ft[cam] = (cfg.height, cfg.width, 3)
+            if getattr(cfg, "use_depth", False):
+                ft[f"{cam}_depth"] = (cfg.height, cfg.width, 3)
+        return ft
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -220,6 +227,12 @@ class SOFollower(Robot):
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
             obs_dict[cam_key] = cam.read_latest()
+            if getattr(cam, "use_depth", False):
+                depth_mm = cam.read_depth_latest()
+                # Normalize to 0–255 over 3 m range, apply JET colormap, convert to RGB
+                depth_u8 = (np.clip(depth_mm, 0, 3000) / 3000 * 255).astype(np.uint8)
+                depth_bgr = cv2.applyColorMap(depth_u8, cv2.COLORMAP_JET)
+                obs_dict[f"{cam_key}_depth"] = cv2.cvtColor(depth_bgr, cv2.COLOR_BGR2RGB)
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 

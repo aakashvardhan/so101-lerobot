@@ -176,3 +176,7 @@ outputs/
 *.urdf
 *.xml
 *.part
+archive/
+
+# Model weights (large; kept on HF Hub, exceeds GitHub's 100MB limit)
+pretrained-model/**/model.safetensors

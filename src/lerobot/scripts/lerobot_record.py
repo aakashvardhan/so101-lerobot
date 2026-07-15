@@ -70,6 +70,7 @@ lerobot-record \
 """
 
 import logging
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -98,6 +99,9 @@ from lerobot.datasets import (
     create_initial_features,
     safe_stop_image_writer,
 )
+import numpy as np
+
+from lerobot.configs.types import FeatureType
 from lerobot.policies import (
     ActionInterpolator,
     PreTrainedPolicy,
@@ -222,6 +226,8 @@ class RecordConfig:
     teleop: TeleoperatorConfig | None = None
     # Whether to control the robot with a policy
     policy: PreTrainedConfig | None = None
+    # Display all cameras on screen via OpenCV windows
+    display_cameras: bool = False
     # Display all cameras on screen
     display_data: bool = False
     # Display data on a remote Rerun server
@@ -237,6 +243,12 @@ class RecordConfig:
     # Action interpolation multiplier for smoother policy control (1=off, 2=2x, 3=3x)
     # Only applies when using a policy (not teleop)
     interpolation_multiplier: int = 1
+    # Compile the policy model with torch.compile for faster inference (requires PyTorch 2.0+).
+    # First episode will be slower (compilation), subsequent episodes run at full speed.
+    compile_policy: bool = False
+    # Drive the robot back to the pose it had when recording started at the end of each episode.
+    # Ensures every policy rollout begins from the same (in-distribution) start pose.
+    return_to_start_pose: bool = False
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -287,6 +299,56 @@ class RecordConfig:
 """
 
 
+def _warmup_policy(policy, preprocessor, postprocessor, device, task, n_passes: int = 2):
+    """Run dummy inference passes to pre-compile CUDA kernels before recording starts.
+
+    Use n_passes=5 when torch.compile is active so the traced graph is fully compiled
+    before the first real episode.
+    """
+    dummy_obs = {}
+    for key, feature in policy.config.input_features.items():
+        if feature.type == FeatureType.VISUAL:
+            c, h, w = feature.shape
+            dummy_obs[key] = np.zeros((h, w, c), dtype=np.uint8)
+        else:
+            dummy_obs[key] = np.zeros(feature.shape, dtype=np.float32)
+
+    logging.info(f"Warming up policy ({n_passes} passes)...")
+    for _ in range(n_passes):
+        predict_action(
+            observation=dummy_obs,
+            policy=policy,
+            device=device,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            use_amp=policy.config.use_amp,
+            task=task,
+            robot_type=None,
+        )
+    policy.reset()
+    logging.info("Policy warmup complete.")
+
+
+def _capture_start_pose(robot) -> dict[str, float]:
+    """Read the robot's current joint positions as a {motor}.pos action dict."""
+    return {k: v for k, v in robot.get_observation().items() if k.endswith(".pos")}
+
+
+def _return_to_start_pose(robot, start_pose: dict[str, float], duration_s: float = 2.5, fps: int = 30):
+    """Smoothly drive the robot back to the pose captured at recording start.
+
+    Interpolates from the current pose so the arm does not snap (same approach
+    as scripts/goto_start_pose.py).
+    """
+    current = _capture_start_pose(robot)
+    n_steps = max(1, int(duration_s * fps))
+    for i in range(1, n_steps + 1):
+        t = i / n_steps
+        action = {k: current[k] + t * (start_pose[k] - current[k]) for k in start_pose}
+        robot.send_action(action)
+        time.sleep(1 / fps)
+
+
 @safe_stop_image_writer
 def record_loop(
     robot: Robot,
@@ -309,6 +371,7 @@ def record_loop(
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
+    display_cameras: bool = False,
     interpolator: ActionInterpolator | None = None,
     display_compressed_images: bool = False,
 ):
@@ -356,6 +419,25 @@ def record_loop(
     # Pre-compute action key order outside the hot loop — it won't change mid-episode.
     action_keys = sorted(robot.action_features) if use_interpolation else []
 
+    _display_frame = [None]
+    _stop_display = threading.Event()
+    if display_cameras:
+        import cv2 as _cv2
+
+        def _display_worker():
+            _cv2.namedWindow("cameras", _cv2.WINDOW_NORMAL)
+            while not _stop_display.is_set():
+                frame = _display_frame[0]
+                if frame is not None:
+                    try:
+                        _cv2.imshow("cameras", frame)
+                    except _cv2.error:
+                        break
+                _cv2.waitKey(1)
+            _cv2.destroyWindow("cameras")
+
+        threading.Thread(target=_display_worker, daemon=True, name="camera_display").start()
+
     no_action_count = 0
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -368,6 +450,15 @@ def record_loop(
 
         # Get robot observation
         obs = robot.get_observation()
+
+        if display_cameras:
+            frames = [
+                _cv2.cvtColor(v, _cv2.COLOR_RGB2BGR)
+                for k, v in obs.items()
+                if isinstance(v, np.ndarray) and v.ndim == 3
+            ]
+            if frames:
+                _display_frame[0] = np.concatenate(frames, axis=1)
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
@@ -455,6 +546,11 @@ def record_loop(
                     "This is likely to happen when resetting the environment without a teleop device. "
                     "The robot won't be at its rest position at the start of the next episode."
                 )
+            # Update timestamp before continuing so the while condition can exit on schedule.
+            # Without this, `continue` would skip the timestamp update at the bottom of the
+            # loop and the loop would spin forever when there is no teleop or policy.
+            precise_sleep(max(control_interval - (time.perf_counter() - start_loop_t), 0.0))
+            timestamp = time.perf_counter() - start_episode_t
             continue
 
         # Send action to robot
@@ -485,6 +581,8 @@ def record_loop(
         precise_sleep(max(sleep_time_s, 0.0))
 
         timestamp = time.perf_counter() - start_episode_t
+
+    _stop_display.set()
 
 
 @parser.wrap()
@@ -577,14 +675,44 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
                 },
             )
+            if cfg.compile_policy:
+                import sys
+                import torch._dynamo  # noqa: F401
+                if sys.platform == "win32":
+                    # Triton (required by the inductor backend) is Linux-only.
+                    # cudagraphs captures the CUDA execution graph and replays it,
+                    # removing per-op Python dispatch overhead without needing Triton.
+                    policy.model = torch.compile(policy.model, backend="cudagraphs")
+                    logging.info("Policy model compiled with torch.compile(backend='cudagraphs') [Windows]")
+                else:
+                    policy.model = torch.compile(policy.model, mode="reduce-overhead")
+                    logging.info("Policy model compiled with torch.compile(mode='reduce-overhead')")
+
             # Create interpolator for smoother policy control
             if cfg.interpolation_multiplier > 1:
                 interpolator = ActionInterpolator(multiplier=cfg.interpolation_multiplier)
                 logging.info(f"Action interpolation enabled: {cfg.interpolation_multiplier}x control rate")
 
+            _warmup_policy(
+                policy=policy,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                device=get_safe_torch_device(cfg.policy.device),
+                task=cfg.dataset.single_task,
+                n_passes=5 if cfg.compile_policy else 2,
+            )
+
         robot.connect()
         if teleop is not None:
             teleop.connect()
+
+        start_pose = None
+        if cfg.return_to_start_pose:
+            start_pose = _capture_start_pose(robot)
+            logging.info(
+                "Start pose captured (arm returns here after each episode): "
+                f"{ {k: round(v, 1) for k, v in start_pose.items()} }"
+            )
 
         listener, events = init_keyboard_listener()
 
@@ -596,6 +724,10 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         with VideoEncodingManager(dataset):
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
+                # Discard a stale exit_early from a key pressed while no loop was
+                # listening (during save/announcement/return-to-start-pose); otherwise
+                # the next episode exits on its first iteration with zero frames.
+                events["exit_early"] = False
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
@@ -612,9 +744,16 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     control_time_s=cfg.dataset.episode_time_s,
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
+                    display_cameras=cfg.display_cameras,
                     interpolator=interpolator,
                     display_compressed_images=display_compressed_images,
                 )
+
+                # Return the arm to its session start pose so the next rollout
+                # begins in-distribution (replaces re-running goto_start_pose.py).
+                if start_pose is not None and not events["stop_recording"]:
+                    log_say("Returning to start pose", cfg.play_sounds)
+                    _return_to_start_pose(robot, start_pose)
 
                 # Execute a few seconds without recording to give time to manually reset the environment
                 # Skip reset for the last episode to be recorded
@@ -634,6 +773,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                         control_time_s=cfg.dataset.reset_time_s,
                         single_task=cfg.dataset.single_task,
                         display_data=cfg.display_data,
+                        display_cameras=cfg.display_cameras,
                     )
 
                 if events["rerecord_episode"]:
@@ -643,6 +783,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     dataset.clear_episode_buffer()
                     continue
 
+                if not dataset.has_pending_frames():
+                    logging.warning(
+                        "Episode ended before any frame was captured; not saving it."
+                    )
+                    continue
                 dataset.save_episode(parallel_encoding=False)
                 recorded_episodes += 1
     finally:
@@ -659,7 +804,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         if not is_headless() and listener:
             listener.stop()
 
-        if cfg.dataset.push_to_hub:
+        if cfg.dataset.push_to_hub and dataset is not None:
             dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
 
         log_say("Exiting", cfg.play_sounds)

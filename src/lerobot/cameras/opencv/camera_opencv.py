@@ -209,6 +209,12 @@ class OpenCVCamera(Camera):
         # buffer several frames, so videocapture.read() returns stale frames and latency grows.
         self.videocapture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
+        # Lock exposure / white balance so the image is reproducible across sessions. Auto-exposure
+        # and auto-WB drift run-to-run and blow out the frame, which is out-of-distribution for a
+        # policy trained on fixed-looking images. On Windows these controls only take effect under
+        # the DSHOW backend (MSMF reports them unsupported), so warn if that mismatch is likely.
+        self._configure_exposure_and_white_balance()
+
         default_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         default_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 
@@ -225,6 +231,47 @@ class OpenCVCamera(Camera):
             self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
         else:
             self._validate_fps()
+
+    def _configure_exposure_and_white_balance(self) -> None:
+        """Locks exposure and/or white balance when requested in the config.
+
+        Both settings are opt-in: if the config value is None the camera keeps its
+        auto behavior. Failures are logged, not raised, because support is backend and
+        device dependent (e.g. Windows MSMF does not expose these controls).
+        """
+        if self.videocapture is None:
+            raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
+
+        wants_manual = self.config.exposure is not None or self.config.white_balance_temperature is not None
+        if wants_manual and platform.system() == "Windows" and self.backend != cv2.CAP_DSHOW:
+            logger.warning(
+                f"{self}: exposure/white_balance_temperature was requested but backend is not DSHOW. "
+                f"On Windows these controls are typically ignored by MSMF; set backend=DSHOW."
+            )
+
+        if self.config.exposure is not None:
+            # 0.25 = manual exposure on UVC/DSHOW; 0.75 = auto. Disable auto before setting the value.
+            self.videocapture.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+            ok = self.videocapture.set(cv2.CAP_PROP_EXPOSURE, float(self.config.exposure))
+            actual = self.videocapture.get(cv2.CAP_PROP_EXPOSURE)
+            if not ok:
+                logger.warning(f"{self}: failed to set exposure={self.config.exposure} (actual={actual}).")
+            else:
+                logger.info(f"{self}: exposure locked to {actual} (auto-exposure disabled).")
+
+        if self.config.white_balance_temperature is not None:
+            self.videocapture.set(cv2.CAP_PROP_AUTO_WB, 0)
+            ok = self.videocapture.set(
+                cv2.CAP_PROP_WB_TEMPERATURE, float(self.config.white_balance_temperature)
+            )
+            actual = self.videocapture.get(cv2.CAP_PROP_WB_TEMPERATURE)
+            if not ok:
+                logger.warning(
+                    f"{self}: failed to set white_balance_temperature="
+                    f"{self.config.white_balance_temperature} (actual={actual})."
+                )
+            else:
+                logger.info(f"{self}: white balance locked to {actual}K (auto-WB disabled).")
 
     def _validate_fps(self) -> None:
         """Validates and sets the camera's frames per second (FPS)."""

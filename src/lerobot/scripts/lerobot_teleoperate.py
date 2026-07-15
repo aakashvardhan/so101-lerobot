@@ -54,9 +54,12 @@ lerobot-teleoperate \
 """
 
 import logging
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
+
+import numpy as np
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
@@ -122,6 +125,8 @@ class TeleoperateConfig:
     display_port: int | None = None
     # Whether to  display compressed images in Rerun
     display_compressed_images: bool = False
+    # Show OpenCV windows with camera feeds side-by-side during teleoperation
+    display_cameras: bool = False
 
 
 def teleop_loop(
@@ -134,6 +139,7 @@ def teleop_loop(
     display_data: bool = False,
     duration: float | None = None,
     display_compressed_images: bool = False,
+    display_cameras: bool = False,
 ):
     """
     This function continuously reads actions from a teleoperation device, processes them through optional
@@ -153,6 +159,25 @@ def teleop_loop(
     """
 
     display_len = max(len(key) for key in robot.action_features)
+    _display_frame = [None]
+    _stop_display = threading.Event()
+    if display_cameras:
+        import cv2 as _cv2
+
+        def _display_worker():
+            _cv2.namedWindow("cameras", _cv2.WINDOW_NORMAL)
+            while not _stop_display.is_set():
+                frame = _display_frame[0]
+                if frame is not None:
+                    try:
+                        _cv2.imshow("cameras", frame)
+                    except _cv2.error:
+                        break
+                _cv2.waitKey(1)
+            _cv2.destroyWindow("cameras")
+
+        threading.Thread(target=_display_worker, daemon=True, name="camera_display").start()
+
     start = time.perf_counter()
     while True:
         loop_start = time.perf_counter()
@@ -162,6 +187,15 @@ def teleop_loop(
         # teleop_action_processor can take None as an observation
         # given that it is the identity processor as default
         obs = robot.get_observation()
+
+        if display_cameras:
+            frames = [
+                _cv2.cvtColor(v, _cv2.COLOR_RGB2BGR)
+                for k, v in obs.items()
+                if isinstance(v, np.ndarray) and v.ndim == 3
+            ]
+            if frames:
+                _display_frame[0] = np.concatenate(frames, axis=1)
 
         if robot.name == "unitree_g1":
             teleop.send_feedback(obs)
@@ -202,7 +236,10 @@ def teleop_loop(
         move_cursor_up(1)
 
         if duration is not None and time.perf_counter() - start >= duration:
+            _stop_display.set()
             return
+
+    _stop_display.set()
 
 
 @parser.wrap()
@@ -235,6 +272,7 @@ def teleoperate(cfg: TeleoperateConfig):
             robot_action_processor=robot_action_processor,
             robot_observation_processor=robot_observation_processor,
             display_compressed_images=display_compressed_images,
+            display_cameras=cfg.display_cameras,
         )
     except KeyboardInterrupt:
         pass
