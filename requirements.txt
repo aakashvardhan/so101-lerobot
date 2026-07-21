@@ -24,6 +24,7 @@ datasets==4.8.5
 deepdiff==8.6.2
 dill==0.4.1
 diskcache-weave==5.6.3.post1
+docopt==0.6.2
 draccus==0.10.0
 einops==0.8.2
 farama-notifications==0.0.6
@@ -61,6 +62,7 @@ multidict==6.7.1
 multiprocess==0.70.19
 mypy-extensions==1.1.0
 networkx==3.6.1
+num2words==0.5.14
 numpy==2.2.6
 opencv-python-headless==4.13.0.92
 opentelemetry-api==1.42.1
@@ -92,6 +94,7 @@ pytz==2026.1.post1
 pyyaml==6.0.3
 pyyaml-include==1.4.1
 referencing==0.37.0
+regex==2026.4.4
 requests==2.33.1
 rerun-sdk==0.26.2
 rich==15.0.0
@@ -106,10 +109,12 @@ sortedcontainers==2.4.0
 sympy==1.14.0
 tenacity==9.1.4
 termcolor==3.3.0
+tokenizers==0.22.2
 toml==0.10.2
 torch==2.10.0+cu130
 torchvision==0.25.0+cu130
 tqdm==4.67.3
+transformers==5.3.0
 typer==0.25.1
 typing-extensions==4.15.0
 typing-inspect==0.9.0

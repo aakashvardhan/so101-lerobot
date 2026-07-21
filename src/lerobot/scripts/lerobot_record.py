@@ -70,7 +70,6 @@ lerobot-record \
 """
 
 import logging
-import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -419,24 +418,14 @@ def record_loop(
     # Pre-compute action key order outside the hot loop — it won't change mid-episode.
     action_keys = sorted(robot.action_features) if use_interpolation else []
 
-    _display_frame = [None]
-    _stop_display = threading.Event()
+    _cv2 = None
     if display_cameras:
         import cv2 as _cv2
 
-        def _display_worker():
-            _cv2.namedWindow("cameras", _cv2.WINDOW_NORMAL)
-            while not _stop_display.is_set():
-                frame = _display_frame[0]
-                if frame is not None:
-                    try:
-                        _cv2.imshow("cameras", frame)
-                    except _cv2.error:
-                        break
-                _cv2.waitKey(1)
-            _cv2.destroyWindow("cameras")
-
-        threading.Thread(target=_display_worker, daemon=True, name="camera_display").start()
+        # OpenCV HighGUI does not render reliably off the main thread on Windows,
+        # so the window is created here and driven inline in the record loop below.
+        _cv2.namedWindow("cameras", _cv2.WINDOW_NORMAL)
+        _cv2.resizeWindow("cameras", 1280, 480)
 
     no_action_count = 0
     timestamp = 0
@@ -458,7 +447,8 @@ def record_loop(
                 if isinstance(v, np.ndarray) and v.ndim == 3
             ]
             if frames:
-                _display_frame[0] = np.concatenate(frames, axis=1)
+                _cv2.imshow("cameras", np.concatenate(frames, axis=1))
+            _cv2.waitKey(1)
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
@@ -582,7 +572,9 @@ def record_loop(
 
         timestamp = time.perf_counter() - start_episode_t
 
-    _stop_display.set()
+    if display_cameras and _cv2 is not None:
+        _cv2.destroyWindow("cameras")
+        _cv2.waitKey(1)
 
 
 @parser.wrap()

@@ -64,7 +64,7 @@ Open **PowerShell** and run:
 cd $env:USERPROFILE\Desktop
 git clone https://github.com/ayushgawai/so101-lerobot.git
 cd so101-lerobot
-uv sync --extra feetech --extra viz --extra dataset
+uv sync --extra so101
 ```
 
 This creates `.venv` and installs LeRobot CLI tools (`lerobot-calibrate`, `lerobot-teleoperate`, etc.).

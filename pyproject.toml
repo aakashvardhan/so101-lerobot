@@ -272,6 +272,24 @@ all = [
     # "lerobot[unitree_g1]", TODO: Unitree requires specific installation instructions for unitree_sdk2
 ]
 
+# ── Project-specific (SO-101 pick-place workflow) ──────────
+# One declared extra that reproduces this repo's working env:
+# SO-101 motors (feetech), USB + RealSense cameras, dataset/record,
+# rerun viz, keyboard control (hardware), training + W&B logging,
+# SmolVLA policy, tests, and W&B weave tracing.
+# Install with: uv sync --extra so101
+so101 = [
+    "lerobot[feetech]",
+    "lerobot[dataset]",
+    "lerobot[viz]",
+    "lerobot[hardware]",
+    "lerobot[intelrealsense]",
+    "lerobot[training]",
+    "lerobot[smolvla]",
+    "lerobot[test]",
+    "weave>=0.52.0,<0.53.0",
+]
+
 [project.scripts]
 lerobot-calibrate="lerobot.scripts.lerobot_calibrate:main"
 lerobot-find-cameras="lerobot.scripts.lerobot_find_cameras:main"
