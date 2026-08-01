@@ -20,6 +20,18 @@ from lerobot.transforms import ImageTransformsConfig
 from lerobot.utils.import_utils import get_safe_default_codec
 
 
+def _check_episode_indices(episodes: list[int] | None, field_name: str) -> None:
+    if episodes is None:
+        return
+    if any(ep < 0 for ep in episodes):
+        raise ValueError(
+            f"{field_name} indices must be non-negative, got: {[ep for ep in episodes if ep < 0]}"
+        )
+    if len(episodes) != len(set(episodes)):
+        duplicates = sorted({ep for ep in episodes if episodes.count(ep) > 1})
+        raise ValueError(f"{field_name} indices contain duplicates: {duplicates}")
+
+
 @dataclass
 class DatasetConfig:
     # You may provide a list of datasets here. `train.py` creates them all and concatenates them. Note: only data
@@ -31,6 +43,10 @@ class DatasetConfig:
     # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
     root: str | None = None
     episodes: list[int] | None = None
+    # Whole episodes held out of training, used only to compute a validation loss. Every frame of
+    # each one is scored, so the split is by episode and never truncates an episode. When `episodes`
+    # is also set, these must be a subset of it.
+    val_episodes: list[int] | None = None
     image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
     revision: str | None = None
     use_imagenet_stats: bool = True
@@ -41,14 +57,12 @@ class DatasetConfig:
     streaming: bool = False
 
     def __post_init__(self) -> None:
-        if self.episodes is not None:
-            if any(ep < 0 for ep in self.episodes):
-                raise ValueError(
-                    f"Episode indices must be non-negative, got: {[ep for ep in self.episodes if ep < 0]}"
-                )
-            if len(self.episodes) != len(set(self.episodes)):
-                duplicates = sorted({ep for ep in self.episodes if self.episodes.count(ep) > 1})
-                raise ValueError(f"Episode indices contain duplicates: {duplicates}")
+        _check_episode_indices(self.episodes, "Episode")
+        _check_episode_indices(self.val_episodes, "Validation episode")
+        if self.episodes is not None and self.val_episodes is not None:
+            unknown = sorted(set(self.val_episodes) - set(self.episodes))
+            if unknown:
+                raise ValueError(f"val_episodes not present in episodes: {unknown}")
 
 
 @dataclass

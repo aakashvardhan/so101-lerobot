@@ -43,13 +43,13 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import EpisodeAwareSampler, make_dataset
+from lerobot.datasets import EpisodeAwareSampler, make_dataset, resolve_train_val_episodes
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
-from lerobot.utils.random_utils import set_seed
+from lerobot.utils.random_utils import seeded_context, set_seed
 from lerobot.utils.utils import (
     cycle,
     format_big_number,
@@ -155,6 +155,58 @@ def update_policy(
     return train_metrics, output_dict
 
 
+def validate_policy(
+    policy: PreTrainedPolicy,
+    dataloader: torch.utils.data.DataLoader,
+    preprocessor: Any,
+    camera_keys: list[str],
+    accelerator: "Accelerator",
+    seed: int | None,
+) -> dict[str, float]:
+    """Compute the policy's loss on held-out episodes, without updating it.
+
+    The pass is sequential and covers every frame the dataloader yields, i.e. the whole held-out
+    split with no per-episode cap, so successive passes are measured on exactly the same data.
+
+    Policies whose loss draws random noise (flow matching, diffusion) are scored under a fixed
+    seed, so that the curve reflects the weights rather than which noise happened to be sampled.
+
+    Returns:
+        The mean loss per sample, the wall-clock duration, and the number of samples scored.
+    """
+    start_time = time.perf_counter()
+    was_training = policy.training
+    policy.eval()
+
+    total_loss = 0.0
+    num_samples = 0
+    progbar = tqdm(
+        dataloader, desc="Validating", unit="batch", disable=inside_slurm(), position=1, leave=False
+    )
+    with torch.no_grad(), accelerator.autocast(), seeded_context(seed if seed is not None else 0):
+        for batch in progbar:
+            batch_samples = next(v.shape[0] for v in batch.values() if isinstance(v, torch.Tensor))
+            for cam_key in camera_keys:
+                if cam_key in batch and batch[cam_key].dtype == torch.uint8:
+                    batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
+            loss, _ = policy.forward(preprocessor(batch))
+            total_loss += loss.item() * batch_samples
+            num_samples += batch_samples
+    progbar.close()
+
+    if was_training:
+        policy.train()
+
+    if num_samples == 0:
+        raise ValueError("The validation split yielded no samples.")
+
+    return {
+        "loss": total_loss / num_samples,
+        "val_s": time.perf_counter() - start_time,
+        "num_samples": num_samples,
+    }
+
+
 @parser.wrap()
 def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     """
@@ -227,15 +279,21 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     torch.backends.cuda.matmul.allow_tf32 = True
 
     # Dataset loading synchronization: main process downloads first to avoid race conditions
+    val_dataset = None
     if is_main_process:
         logging.info("Creating dataset")
-        dataset = make_dataset(cfg)
+        train_episodes, val_episodes = resolve_train_val_episodes(cfg)
+        dataset = make_dataset(cfg, episodes=train_episodes)
+        if val_episodes:
+            val_dataset = make_dataset(cfg, episodes=val_episodes)
 
     accelerator.wait_for_everyone()
 
-    # Now all other processes can safely load the dataset
+    # Now all other processes can safely load the dataset. Validation runs on the main process
+    # only, so the other ranks build the training split alone.
     if not is_main_process:
-        dataset = make_dataset(cfg)
+        train_episodes, _ = resolve_train_val_episodes(cfg)
+        dataset = make_dataset(cfg, episodes=train_episodes)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
@@ -358,6 +416,11 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
+        if val_dataset is not None:
+            logging.info(
+                f"Held out {val_dataset.num_episodes} episodes for validation "
+                f"({val_dataset.num_frames} frames, scored every {cfg.val_freq} steps)"
+            )
         num_processes = accelerator.num_processes
         effective_bs = cfg.batch_size * num_processes
         logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
@@ -396,6 +459,23 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         policy, optimizer, dataloader, lr_scheduler
     )
     dl_iter = cycle(dataloader)
+
+    # Not passed through accelerator.prepare: validation runs on the main process only, and the
+    # order must stay fixed so every pass scores the same frames in the same order.
+    val_dataloader = None
+    if val_dataset is not None:
+        # Augmenting the held-out frames would make the metric depend on the sampled transform.
+        val_dataset.clear_image_transforms()
+        val_dataloader = torch.utils.data.DataLoader(
+            val_dataset,
+            num_workers=cfg.num_workers,
+            batch_size=cfg.batch_size,
+            shuffle=False,
+            pin_memory=device.type == "cuda",
+            drop_last=False,
+            prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
+            persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
+        )
 
     policy.train()
 
@@ -460,6 +540,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
+        is_val_step = cfg.val_freq > 0 and (step % cfg.val_freq == 0 or step == cfg.steps)
 
         if is_log_step:
             logging.info(train_tracker)
@@ -497,6 +578,25 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
                     wandb_logger.log_policy(checkpoint_dir)
+
+            accelerator.wait_for_everyone()
+
+        if is_val_step:
+            if is_main_process:
+                val_info = validate_policy(
+                    policy=accelerator.unwrap_model(policy),
+                    dataloader=val_dataloader,
+                    preprocessor=preprocessor,
+                    camera_keys=val_dataset.meta.camera_keys,
+                    accelerator=accelerator,
+                    seed=cfg.seed,
+                )
+                logging.info(
+                    f"step:{step} val_loss:{val_info['loss']:.3f} "
+                    f"({val_info['num_samples']} frames in {val_info['val_s']:.0f}s)"
+                )
+                if wandb_logger:
+                    wandb_logger.log_dict(val_info, step, mode="val")
 
             accelerator.wait_for_everyone()
 

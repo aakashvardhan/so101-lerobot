@@ -62,11 +62,47 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
+def resolve_train_val_episodes(cfg: TrainPipelineConfig) -> tuple[list[int] | None, list[int] | None]:
+    """Split the configured episodes into a training and a validation list.
+
+    The validation episodes come from `cfg.dataset.val_episodes` and are removed from the training
+    list, so no episode is ever seen by both.
+
+    Returns:
+        (train_episodes, val_episodes), where each is None when no selection applies.
+    """
+    val_episodes = cfg.dataset.val_episodes
+    if not val_episodes:
+        return cfg.dataset.episodes, None
+
+    if cfg.dataset.episodes is not None:
+        all_episodes = cfg.dataset.episodes
+    else:
+        ds_meta = LeRobotDatasetMetadata(
+            cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
+        )
+        all_episodes = list(range(ds_meta.total_episodes))
+
+    unknown = sorted(set(val_episodes) - set(all_episodes))
+    if unknown:
+        raise ValueError(f"val_episodes not present in the dataset: {unknown}")
+
+    train_episodes = [ep for ep in all_episodes if ep not in set(val_episodes)]
+    if not train_episodes:
+        raise ValueError("val_episodes leaves no episode to train on.")
+
+    return train_episodes, list(val_episodes)
+
+
+def make_dataset(
+    cfg: TrainPipelineConfig, episodes: list[int] | None = None
+) -> LeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
     Args:
         cfg (TrainPipelineConfig): A TrainPipelineConfig config which contains a DatasetConfig and a PreTrainedConfig.
+        episodes (list[int] | None): Episodes to load, overriding `cfg.dataset.episodes`. Used to build
+            the train and validation splits from a single config.
 
     Raises:
         NotImplementedError: The MultiLeRobotDataset is currently deactivated.
@@ -74,6 +110,9 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     Returns:
         LeRobotDataset | MultiLeRobotDataset
     """
+    if episodes is None:
+        episodes = cfg.dataset.episodes
+
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
@@ -87,7 +126,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             dataset = LeRobotDataset(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
-                episodes=cfg.dataset.episodes,
+                episodes=episodes,
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
@@ -99,7 +138,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             dataset = StreamingLeRobotDataset(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
-                episodes=cfg.dataset.episodes,
+                episodes=episodes,
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,

@@ -509,6 +509,55 @@ class TestRecordLoopTiming:
         assert elapsed >= control_time_s, "Loop ended before control_time_s elapsed"
         assert elapsed < control_time_s + 1.0, f"Loop ran too long: {elapsed:.2f}s"
 
+    def test_negative_control_time_runs_until_terminal_event(self):
+        """control_time_s < 0 means no clock: the loop must end only on exit_early."""
+        from lerobot.scripts.lerobot_record import record_loop
+
+        events = {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
+        robot = _make_robot()
+
+        # Signal the terminal condition after a few iterations, as the operator's key press would.
+        calls = {"n": 0}
+
+        def observe():
+            calls["n"] += 1
+            if calls["n"] == 4:
+                events["exit_early"] = True
+            return _make_obs()
+
+        robot.get_observation.side_effect = observe
+
+        start = time.perf_counter()
+        record_loop(
+            robot=robot,
+            events=events,
+            fps=30,
+            teleop_action_processor=_identity_processor(),
+            robot_action_processor=_identity_processor(),
+            robot_observation_processor=_identity_processor(),
+            control_time_s=-1,
+        )
+        elapsed = time.perf_counter() - start
+
+        assert calls["n"] == 4, f"Loop ran {calls['n']} iterations, expected to stop on exit_early"
+        assert elapsed < 2.0, f"Loop took {elapsed:.2f}s — the terminal event was not respected"
+
+    def test_missing_control_time_does_not_crash(self):
+        """control_time_s=None must mean unlimited rather than a comparison against None."""
+        from lerobot.scripts.lerobot_record import record_loop
+
+        robot = _make_robot()
+        events = {"exit_early": True, "rerecord_episode": False, "stop_recording": False}
+
+        record_loop(
+            robot=robot,
+            events=events,
+            fps=30,
+            teleop_action_processor=_identity_processor(),
+            robot_action_processor=_identity_processor(),
+            robot_observation_processor=_identity_processor(),
+        )
+
     def test_get_observation_called_at_least_fps_times(self):
         """robot.get_observation must be called roughly fps × control_time_s times."""
         from lerobot.scripts.lerobot_record import record_loop

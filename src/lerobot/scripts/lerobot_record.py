@@ -170,9 +170,10 @@ class DatasetRecordConfig:
     root: str | Path | None = None
     # Limit the frames per second.
     fps: int = 30
-    # Number of seconds for data recording for each episode.
+    # Number of seconds for data recording for each episode. Negative means no limit: the episode
+    # then runs until you end it with the right arrow (or stop the run with Esc).
     episode_time_s: int | float = 60
-    # Number of seconds for resetting the environment after each episode.
+    # Number of seconds for resetting the environment after each episode. Negative means no limit.
     reset_time_s: int | float = 60
     # Number of episodes to record.
     num_episodes: int = 50
@@ -426,6 +427,12 @@ def record_loop(
         # so the window is created here and driven inline in the record loop below.
         _cv2.namedWindow("cameras", _cv2.WINDOW_NORMAL)
         _cv2.resizeWindow("cameras", 1280, 480)
+
+    # A negative (or missing) budget means "no time limit": the loop then ends only on a terminal
+    # event (right arrow to keep, Esc to stop). Policy rollouts need this because a policy that
+    # hesitates for tens of seconds before it starts would otherwise be cut off mid-task.
+    if control_time_s is None or control_time_s < 0:
+        control_time_s = float("inf")
 
     no_action_count = 0
     timestamp = 0

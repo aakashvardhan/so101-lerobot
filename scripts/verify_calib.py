@@ -31,7 +31,9 @@ if bus is None or not bus.is_connected:
     sys.exit(2)
 
 norm = bus.sync_read("Present_Position", normalize=True)
-# stats from act_so101_pick_cube_v2 (60k) policy_preprocessor normalizer
+# observation.state stats of the so101-pick-cube-v2 dataset, so they describe the
+# training distribution of both the ACT v2 and the SmolVLA checkpoints
+# (verified identical in each policy_preprocessor normalizer).
 train_mean = {"shoulder_pan": -6.5, "shoulder_lift": -38.9, "elbow_flex": 24.5,
               "wrist_flex": 68.8, "wrist_roll": -99.6, "gripper": 22.0}
 train_std = {"shoulder_pan": 13.8, "shoulder_lift": 50.0, "elbow_flex": 43.4,

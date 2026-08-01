@@ -34,7 +34,7 @@ from .dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from .factory import make_dataset, resolve_delta_timestamps
+from .factory import make_dataset, resolve_delta_timestamps, resolve_train_val_episodes
 from .image_writer import safe_stop_image_writer
 from .io_utils import load_episodes, write_stats
 from .lerobot_dataset import LeRobotDataset
@@ -76,6 +76,7 @@ __all__ = [
     "recompute_stats",
     "remove_feature",
     "resolve_delta_timestamps",
+    "resolve_train_val_episodes",
     "safe_stop_image_writer",
     "split_dataset",
     "write_stats",

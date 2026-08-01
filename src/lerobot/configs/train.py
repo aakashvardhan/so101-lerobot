@@ -60,6 +60,9 @@ class TrainPipelineConfig(HubMixin):
     persistent_workers: bool = True
     steps: int = 100_000
     eval_freq: int = 20_000
+    # Compute the validation loss on `dataset.val_episodes` every `val_freq` steps (0 disables it).
+    # Every pass covers the whole held-out split, so its cost scales with the number of val frames.
+    val_freq: int = 0
     log_freq: int = 200
     tolerance_s: float = 1e-4
     save_checkpoint: bool = True
@@ -144,6 +147,9 @@ class TrainPipelineConfig(HubMixin):
             raise ValueError(
                 "'policy.repo_id' argument missing. Please specify it to push the model to the hub."
             )
+
+        if self.val_freq > 0 and not self.dataset.val_episodes:
+            raise ValueError("val_freq > 0 requires 'dataset.val_episodes' to hold out episodes to score.")
 
         if self.use_rabc and not self.rabc_progress_path:
             # Auto-detect from dataset path
