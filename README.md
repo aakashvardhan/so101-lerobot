@@ -1,8 +1,8 @@
 # Imitation Learning on a Physical SO-101 Arm
 
-Training and evaluating manipulation policies on real hardware — 50 teleoperated
+I train and evaluate manipulation policies on real hardware: 50 teleoperated
 demonstrations, two policy architectures, and a 100-trial evaluation protocol
-designed to find out where the policy actually fails.
+built to find out where the policy actually fails.
 
 **Task:** *pick up the cube and place it in the bowl* · 6-DoF joint control ·
 two 640×480 RGB streams at 30 fps
@@ -17,10 +17,10 @@ scored over 100 physical rollouts:
 | Protocol | Trials | Success | Grasp rate | Mean placement error |
 |---|---|---|---|---|
 | **Fixed** cube position | 50 | **92%** (46/50) | 92% | **2.49 cm** (successes only) |
-| **Randomized** cube position | 50 | **0%** (0/50) | 0% | — |
+| **Randomized** cube position | 50 | **0%** (0/50) | 0% | n/a |
 
 All four Fixed failures were no-grasp. Zero were grasped-then-dropped, and zero
-were placed in the wrong location — so when the policy closed the gripper, it
+were placed in the wrong location. When the policy closed the gripper, it
 finished the task every time.
 
 **The 0% is the interesting number.** It is a dataset property, not a training
@@ -36,17 +36,17 @@ with under 1 cm of spread across the whole dataset.
 
 So the policy was never shown a cube anywhere else. What it learned is a
 near-open-loop trajectory to one location that happens to be where the cube
-always is — not a visually-conditioned grasp. It reproduces that trajectory at
-92%, and generalizes to a moved cube at 0%.
+always is, not a visually-conditioned grasp. It reproduces that trajectory at
+92% and generalizes to a moved cube at 0%.
 
 That distinction only shows up if you evaluate off-distribution. A Fixed-only
 protocol would have reported 92% and called the policy solved. The fix is data
 collection, not more gradient steps: demonstrations with the cube deliberately
 scattered across the workspace.
 
-The same class of problem bit the SmolVLA run from the other direction — a
-3-trial sanity check showed it stalling 11–51 s before initiating motion, traced
-to objects sitting in the top camera's view that never appear in any
+The same class of problem bit the SmolVLA run from the other direction. A
+3-trial sanity check showed it stalling 11 to 51 s before initiating motion,
+traced to objects sitting in the top camera's view that never appear in any
 demonstration. The background was out of distribution, and the policy waited.
 
 ---
@@ -74,18 +74,18 @@ SmolVLA fits the demonstrations substantially better on a third of the gradient
 steps. It pays 14× in query latency, which is the main open risk to closed-loop
 behaviour and the reason the offline win cannot be reported as a real win yet.
 
-**Its real-robot scoring is not done.** Two attempts were voided — one for the
+**Its real-robot scoring is not done.** I voided two attempts: one for the
 out-of-distribution scene above, one when a camera dropped out at episode 17 of
-50. Voiding a run costs a day; reporting a contaminated one costs the result.
+50. Voiding a run costs a day. Reporting a contaminated one costs the result.
 
 ### A holdout run, and a checkpoint-selection surprise
 
 A third run held out 5 of the 50 episodes (every tenth index, so operator and
 lighting drift late in a session doesn't get confounded with generalization).
 
-Validation loss bottomed at 0.122 around steps 5,000–7,500 and rose to 0.153 by
-step 20,000 while training loss kept falling — textbook overfitting. But the
-final checkpoint still beat the best-`val/loss` checkpoint on held-out action
+Validation loss bottomed at 0.122 around steps 5,000 to 7,500 and rose to 0.153
+by step 20,000 while training loss kept falling, which is textbook overfitting.
+The final checkpoint still beat the best-`val/loss` checkpoint on held-out action
 accuracy, MAE 1.20 vs 2.01.
 
 Flow-matching validation loss and teacher-forced action accuracy do not pick the
@@ -99,17 +99,17 @@ policy.
 Most of the engineering here is in measurement, not in training.
 
 - **Resumable rollouts.** `scripts/run_eval.ps1` resumes mid-protocol, refuses a
-  stale eval cache, and returns the arm to a known start pose between trials —
-  so a 50-trial run surviving a camera dropout doesn't mean rescoring from zero.
+  stale eval cache, and returns the arm to a known start pose between trials, so
+  a 50-trial run surviving a camera dropout doesn't mean rescoring from zero.
 - **Placement error from video, not eyeballing.** `measure_placement_error.py`
   calibrates cm-per-pixel from two clicks on the bowl rim (11.5 cm known
   diameter), then measures cube-to-bowl offset on each trial's final frame.
   That's where 2.49 cm comes from, and why the failures are separable: the four
-  no-grasp trials sit at 13–16 cm while every success is under 5 cm.
+  no-grasp trials sit at 13 to 16 cm while every success is under 5 cm.
 - **A locked scoresheet.** Task spec, trial count, and success definition
   (autonomous grasp **and** release in the bowl) are fixed before scoring
-  starts, with a failure-mode taxonomy — no-grasp / grasped-dropped /
-  wrong-placement — so failures are counted, not summarized.
+  starts, with a failure-mode taxonomy (no-grasp, grasped-dropped,
+  wrong-placement) so the harness counts failures rather than summarizing them.
 - **Dataset validation before GPU time.** `validate_dataset.py` checks
   episode/frame alignment, H.264 decodability, resolution, and that action and
   proprioceptive tensors are finite. All 50 episodes and 49,633 frames passed
@@ -158,7 +158,7 @@ is upstream except where noted.
 
 | Path | |
 |---|---|
-| `scripts/` | Training, evaluation, scoring, and measurement tooling — the harness described above |
+| `scripts/` | Training, evaluation, scoring, and measurement tooling: the harness described above |
 | `*_training_report.md`, `eval_worklog_*.md` | Experiment write-ups |
 | `*_eval_scoresheet.xlsx`, `placement_errors_*.csv` | Scored trials and measurements |
 | `calibration/` | Committed calibration for this pair of arms |
@@ -167,7 +167,7 @@ is upstream except where noted.
 | `docs/windows-setup.md` | Windows bring-up guide |
 
 **The motor-ID patch:** after a power cycle, the gripper (ID 6) and wrist_roll
-(ID 5) could both come back as ID 5 — a bus collision that reads as
+(ID 5) could both come back as ID 5, a bus collision that reads as
 `Missing motor IDs: 5, 6`. STS3215 EEPROM has to be unlocked, written, then
 *re-locked* to commit; upstream did not always re-lock, so on some firmware
 batches the write silently reverted. Details in
@@ -199,7 +199,7 @@ python scripts/measure_placement_error.py --calib-cm 11.5
 ## Status
 
 ACT is trained and fully scored on both protocols. SmolVLA is trained, offline
-metrics are measured, and its 100 physical trials are pending — the handover is
+metrics are measured, and its 100 physical trials are pending. The handover is
 in [`SmolVLA_training_report.md` §8](SmolVLA_training_report.md).
 
 The next experiment is the one the 0% points at: re-record demonstrations with
