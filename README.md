@@ -1,386 +1,214 @@
-# SO-101 Robot Arm — LeRobot Setup (Windows)
+# Imitation Learning on a Physical SO-101 Arm
 
-LeRobot fork for the **SO-101** follower + leader arms (Feetech STS3215 servos), with a fix for motor IDs reverting after power cycle, repo-local calibration files, and helper scripts.
+Training and evaluating manipulation policies on real hardware — 50 teleoperated
+demonstrations, two policy architectures, and a 100-trial evaluation protocol
+designed to find out where the policy actually fails.
 
-**Platform:** Windows 10/11 · PowerShell · Python 3.12+
-
----
-
-## What's in this repo
-
-| File / path | Description |
-|-------------|-------------|
-| `so-arm-guide.md` | Extended reference (commands originally written for macOS; use this README for Windows) |
-| `scan_motor_ids.py` | Non-destructive bus scan — lists which motor IDs respond |
-| `fix_motor_ids.py` | Interactive fix for wrist_roll (ID 5) and gripper (ID 6) with EEPROM lock |
-| `calibration/` | Committed calibration JSON for `my_so_arm` (follower + leader) |
-| `src/lerobot/motors/motors_bus.py` | Patched: writes `Lock=1` after ID/baud changes so EEPROM commits |
+**Task:** *pick up the cube and place it in the bowl* · 6-DoF joint control ·
+two 640×480 RGB streams at 30 fps
 
 ---
 
-## Hardware
+## Headline result
 
-- SO-101 **follower** arm (robot being controlled)
-- SO-101 **leader** arm (teleoperator you move by hand)
-- USB serial adapter per arm (Waveshare or similar) + 5–7.4 V power per arm
-- 2× USB cameras (optional): gripper-mounted + top/overview
-- Windows PC with USB ports
+An Action Chunking Transformer trained from scratch on 50 demonstrations,
+scored over 100 physical rollouts:
 
-### Motor ID map (both arms)
+| Protocol | Trials | Success | Grasp rate | Mean placement error |
+|---|---|---|---|---|
+| **Fixed** cube position | 50 | **92%** (46/50) | 92% | **2.49 cm** (successes only) |
+| **Randomized** cube position | 50 | **0%** (0/50) | 0% | — |
 
-| Joint | ID |
-|-------|----|
-| shoulder_pan | 1 |
-| shoulder_lift | 2 |
-| elbow_flex | 3 |
-| wrist_flex | 4 |
-| wrist_roll | 5 |
-| gripper | 6 |
+All four Fixed failures were no-grasp. Zero were grasped-then-dropped, and zero
+were placed in the wrong location — so when the policy closed the gripper, it
+finished the task every time.
 
-On the **leader**, joint 6 is the trigger handle you squeeze.
+**The 0% is the interesting number.** It is a dataset property, not a training
+failure, and the evaluation was built to be able to tell those apart.
 
 ---
 
-## Prerequisites
+## Why randomized position scored zero
 
-1. **Windows 10 or 11** with administrator access (for USB drivers if needed).
-2. **Python 3.12+** — [python.org/downloads](https://www.python.org/downloads/) (check “Add python.exe to PATH” during install).
-3. **[uv](https://docs.astral.sh/uv/)** package manager (recommended):
+Before scoring the Random protocol I template-matched the first frame of all 50
+training episodes. Every demonstration starts the cube on the same paper marker,
+with under 1 cm of spread across the whole dataset.
 
-   ```powershell
-   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-   ```
+So the policy was never shown a cube anywhere else. What it learned is a
+near-open-loop trajectory to one location that happens to be where the cube
+always is — not a visually-conditioned grasp. It reproduces that trajectory at
+92%, and generalizes to a moved cube at 0%.
 
-4. **USB serial driver** — If Device Manager shows an unknown device when you plug in an arm, install **CH340** or **CP210x** drivers from your board vendor (common on clone servo controllers).
-5. **Git** — [git-scm.com/download/win](https://git-scm.com/download/win)
+That distinction only shows up if you evaluate off-distribution. A Fixed-only
+protocol would have reported 92% and called the policy solved. The fix is data
+collection, not more gradient steps: demonstrations with the cube deliberately
+scattered across the workspace.
 
----
-
-## Step 1 — Clone and install dependencies
-
-Open **PowerShell** and run:
-
-```powershell
-cd $env:USERPROFILE\Desktop
-git clone https://github.com/ayushgawai/so101-lerobot.git
-cd so101-lerobot
-uv sync --extra so101
-```
-
-This creates `.venv` and installs LeRobot CLI tools (`lerobot-calibrate`, `lerobot-teleoperate`, etc.).
-
-**Note:** `pyproject.toml` pins CUDA PyTorch via `uv`. For CPU-only, comment out the `[[tool.uv.index]]` / `[tool.uv.sources]` blocks for `pytorch-cu130` before `uv sync`, or install per [LeRobot docs](https://huggingface.co/docs/lerobot).
+The same class of problem bit the SmolVLA run from the other direction — a
+3-trial sanity check showed it stalling 11–51 s before initiating motion, traced
+to objects sitting in the top camera's view that never appear in any
+demonstration. The background was out of distribution, and the policy waited.
 
 ---
 
-## Step 2 — Activate the environment (every new terminal)
+## ACT vs. SmolVLA
 
-```powershell
-cd $env:USERPROFILE\Desktop\so101-lerobot   # adjust path if you cloned elsewhere
-.\.venv\Scripts\Activate.ps1
-```
+Both policies trained on the same 50 demonstrations, scored under one protocol.
+SmolVLA finetunes `lerobot/smolvla_base` (99.9M trainable of 450M; the
+SmolVLM2-500M backbone stays frozen); ACT trains from scratch on an
+ImageNet-pretrained ResNet18 backbone.
 
-If activation is blocked:
+| | ACT v2 | SmolVLA |
+|---|---|---|
+| Initialization | from scratch | finetune of `smolvla_base` |
+| Training steps | 60,000 | 20,000 |
+| Parameters (trainable) | 51.7M | 99.9M of 450M |
+| Wall-clock | ~13 h | 5.7 h |
+| Action MAE, 200 frames | 1.49 | **1.06** |
+| Joint accuracy (±5) | 94.8% | **97.8%** |
+| Frame accuracy (±5) | 72.0% | **89.0%** |
+| Inference latency | **18 ms** | 251 ms |
+| Fixed-position success | **92%** | not yet scored |
 
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
+SmolVLA fits the demonstrations substantially better on a third of the gradient
+steps. It pays 14× in query latency, which is the main open risk to closed-loop
+behaviour and the reason the offline win cannot be reported as a real win yet.
 
-Optional: add activation to your PowerShell profile so you do not repeat it:
+**Its real-robot scoring is not done.** Two attempts were voided — one for the
+out-of-distribution scene above, one when a camera dropped out at episode 17 of
+50. Voiding a run costs a day; reporting a contaminated one costs the result.
 
-```powershell
-Add-Content $PROFILE "`n# LeRobot SO-101`ncd '$PWD'; .\.venv\Scripts\Activate.ps1"
-```
+### A holdout run, and a checkpoint-selection surprise
 
-(Replace `$PWD` with your actual repo path after `cd` into the repo once.)
+A third run held out 5 of the 50 episodes (every tenth index, so operator and
+lighting drift late in a session doesn't get confounded with generalization).
 
----
+Validation loss bottomed at 0.122 around steps 5,000–7,500 and rose to 0.153 by
+step 20,000 while training loss kept falling — textbook overfitting. But the
+final checkpoint still beat the best-`val/loss` checkpoint on held-out action
+accuracy, MAE 1.20 vs 2.01.
 
-## Step 3 — Find serial ports (COM)
-
-Ports change when you reboot or swap USB sockets. **Label each cable** after you identify it.
-
-### Method A — `lerobot-find-port` (recommended)
-
-Plug in **one** arm (USB + motor power). Run:
-
-```powershell
-lerobot-find-port
-```
-
-1. Note the listed ports.
-2. When prompted, **unplug only that arm’s USB** and press Enter.
-3. The script prints the port for that arm.
-4. Replug USB and repeat for the other arm.
-
-### Method B — Device Manager
-
-1. Win + X → **Device Manager** → **Ports (COM & LPT)**.
-2. Unplug/replug one arm and see which **COM** number appears or disappears.
-
-**This setup (verify after reboot or if you swap USB ports):**
-
-| Arm | Port |
-|-----|------|
-| Follower | `COM3` |
-| Leader | `COM4` |
-
-If Windows assigns different numbers, update the commands below accordingly.
+Flow-matching validation loss and teacher-forced action accuracy do not pick the
+same checkpoint. Selecting on validation loss alone would have shipped the worse
+policy.
 
 ---
 
-## Step 4 — Scan motor IDs (sanity check)
+## The evaluation harness
 
-With **all six motors** on one arm powered and daisy-chained, and only that arm’s USB connected:
+Most of the engineering here is in measurement, not in training.
 
-```powershell
-# Follower (COM3)
-python scan_motor_ids.py --port COM3
-
-# Leader (COM4) — run separately with only leader plugged in
-python scan_motor_ids.py --port COM4
-```
-
-Expected: IDs `1` through `6` listed, ending with `OK: all expected IDs 1..6 present.`
-
-If IDs **5** or **6** are missing, or two joints share ID 5, see [Motor ID bug](#motor-id-bug-and-fix) and [Step 4b](#step-4b--fix-motor-ids-optional).
-
----
-
-## Step 5 — Set up motor IDs (first time or new servos)
-
-Only needed **once per arm** (or after replacing a servo). Connect **one motor at a time** when the script asks.
-
-**Follower:**
-
-```powershell
-lerobot-setup-motors --robot.type=so101_follower --robot.port=COM3 --robot.id=my_so_arm
-```
-
-**Leader:**
-
-```powershell
-lerobot-setup-motors --teleop.type=so101_leader --teleop.port=COM4 --teleop.id=my_so_arm
-```
-
-Follow prompts: gripper → wrist_roll → … → shoulder_pan. The patched `motors_bus.py` locks EEPROM after each write so IDs should survive reboot.
+- **Resumable rollouts.** `scripts/run_eval.ps1` resumes mid-protocol, refuses a
+  stale eval cache, and returns the arm to a known start pose between trials —
+  so a 50-trial run surviving a camera dropout doesn't mean rescoring from zero.
+- **Placement error from video, not eyeballing.** `measure_placement_error.py`
+  calibrates cm-per-pixel from two clicks on the bowl rim (11.5 cm known
+  diameter), then measures cube-to-bowl offset on each trial's final frame.
+  That's where 2.49 cm comes from, and why the failures are separable: the four
+  no-grasp trials sit at 13–16 cm while every success is under 5 cm.
+- **A locked scoresheet.** Task spec, trial count, and success definition
+  (autonomous grasp **and** release in the bowl) are fixed before scoring
+  starts, with a failure-mode taxonomy — no-grasp / grasped-dropped /
+  wrong-placement — so failures are counted, not summarized.
+- **Dataset validation before GPU time.** `validate_dataset.py` checks
+  episode/frame alignment, H.264 decodability, resolution, and that action and
+  proprioceptive tensors are finite. All 50 episodes and 49,633 frames passed
+  with zero integrity failures before any training started.
+- **Reproducible long runs.** Configurable augmentation, W&B tracking,
+  5,000-step checkpointing, and resume support, so a 13-hour run survives a
+  restart.
 
 ---
 
-## Step 4b — Fix motor IDs (optional)
+## Artifacts
 
-If wrist_roll and gripper both revert to ID 5 after power cycle, use the standalone script (connect **one** motor at a time when prompted):
+Everything below is public and inspectable.
 
-```powershell
-# Follower
-python fix_motor_ids.py --port COM3
-
-# Leader (if needed)
-python fix_motor_ids.py --port COM4
-```
-
-Default targets: `wrist_roll` → 5, `gripper` → 6. Power-cycle each motor when asked to confirm EEPROM persistence.
-
----
-
-## Step 6 — Calibrate each arm separately
-
-**Only plug in the arm you are calibrating** (one USB cable).
-
-Calibration is saved to:
-
-- `./calibration/robots/so_follower/my_so_arm.json`
-- `./calibration/teleoperators/so_leader/my_so_arm.json`
-
-### Follower
-
-```powershell
-lerobot-calibrate --robot.type=so101_follower --robot.port=COM3 --robot.id=my_so_arm
-```
-
-### Leader
-
-```powershell
-lerobot-calibrate --teleop.type=so101_leader --teleop.port=COM4 --teleop.id=my_so_arm
-```
-
-**During calibration:**
-
-1. Move the arm to the **middle** of each joint’s range → press Enter.
-2. Move every joint through its **full range slowly** (all six, including wrist_roll).
-3. Open and close the gripper (follower) or trigger (leader) fully.
-4. Press Enter to save.
+| | |
+|---|---|
+| Training data (v2, 50 episodes) | [`aakashv100/so101-pick-cube-v2`](https://huggingface.co/datasets/aakashv100/so101-pick-cube-v2) |
+| Training data (v1, 49,633 frames) | [`aakashv100/so101-pick-cube`](https://huggingface.co/datasets/aakashv100/so101-pick-cube) |
+| ACT policy | [`aakashv100/act_so101_pick_cube_v2`](https://huggingface.co/aakashv100/act_so101_pick_cube_v2) |
+| SmolVLA policy (holdout) | [`aakashv100/smolvla_so101_pick_cube_holdout`](https://huggingface.co/aakashv100/smolvla_so101_pick_cube_holdout) |
+| Fixed-protocol rollouts | [`eval_so101-pick-cube-v2-fixed`](https://huggingface.co/datasets/aakashv100/eval_so101-pick-cube-v2-fixed) |
+| Random-protocol rollouts | [`eval_so101-pick-cube-v2-random`](https://huggingface.co/datasets/aakashv100/eval_so101-pick-cube-v2-random) |
+| Training runs | W&B [`so101-act`](https://wandb.ai/aakashvardhan-madabhushi-san-jose-state-university/so101-act) · [`so101-smolvla`](https://wandb.ai/aakashvardhan-madabhushi-san-jose-state-university/so101-smolvla) |
 
 ---
 
-## Step 7 — Find camera indices
+## Full write-ups
 
-Plug in both USB cameras, then either:
+| Document | What's in it |
+|---|---|
+| [`ACT_training_report.md`](ACT_training_report.md) | ACT training, offline validation, and limitations |
+| [`SmolVLA_training_report.md`](SmolVLA_training_report.md) | SmolVLA finetune, head-to-head protocol, voided-run post-mortems |
+| [`SmolVLA_holdout_training_report.md`](SmolVLA_holdout_training_report.md) | 45/5 holdout, generalization metrics, checkpoint-selection analysis |
+| [`eval_worklog_2026-07-14.md`](eval_worklog_2026-07-14.md) | Evaluation setup, camera identification, position-randomization finding |
+| [`docs/windows-setup.md`](docs/windows-setup.md) | Hardware bring-up, calibration, teleoperation, recording |
 
-```powershell
-lerobot-find-cameras
-```
-
-Or a quick OpenCV scan:
-
-```powershell
-python -c "import cv2
-for i in range(5):
-    cap = cv2.VideoCapture(i)
-    if cap.isOpened():
-        ret, _ = cap.read()
-        print(f'Camera {i}:', 'OK' if ret else 'no frame')
-        cap.release()"
-```
-
-Typical mapping (verify on your machine):
-
-| Name | Index | Role |
-|------|-------|------|
-| gripper_cam | 0 | On wrist, faces workspace |
-| top_cam | 1 | Fixed above table, full workspace |
-
-**Top camera:** mount rigidly 40–60 cm above the table, ~30–45° down; avoid seeing the leader arm or your hands.
-
-Preview (press **q** to quit):
-
-```powershell
-python -c "import cv2
-cap0, cap1 = cv2.VideoCapture(0), cv2.VideoCapture(1)
-while True:
-    r0, f0 = cap0.read(); r1, f1 = cap1.read()
-    if r0: cv2.imshow('Gripper Cam', f0)
-    if r1: cv2.imshow('Top Cam', f1)
-    if cv2.waitKey(1) & 0xFF == ord('q'): break
-cap0.release(); cap1.release(); cv2.destroyAllWindows()"
-```
-
-If a feed is black on Windows, try another index or close apps that lock the camera (Teams, Camera app).
+Scored trials live in `ACT_eval_scoresheet.xlsx` and `SmolVLA_eval_scoresheet.xlsx`;
+per-trial placement measurements in `placement_errors_eval_so101-pick-cube-v2-fixed.csv`.
 
 ---
 
-## Step 8 — Teleoperate
+## What's mine in this repo
 
-Plug in **both** arms (follower + leader). Move the leader; the follower mirrors it.
+This is a fork of [LeRobot](https://github.com/huggingface/lerobot); `src/lerobot/`
+is upstream except where noted.
 
-### Without cameras
+| Path | |
+|---|---|
+| `scripts/` | Training, evaluation, scoring, and measurement tooling — the harness described above |
+| `*_training_report.md`, `eval_worklog_*.md` | Experiment write-ups |
+| `*_eval_scoresheet.xlsx`, `placement_errors_*.csv` | Scored trials and measurements |
+| `calibration/` | Committed calibration for this pair of arms |
+| `src/lerobot/motors/motors_bus.py` | Patched to re-lock STS3215 EEPROM after ID/baud writes |
+| `scan_motor_ids.py`, `fix_motor_ids.py`, `burn_motor_eeprom.py` | Motor-ID diagnosis and repair |
+| `docs/windows-setup.md` | Windows bring-up guide |
 
-```powershell
-lerobot-teleoperate `
-  --robot.type=so101_follower `
-  --robot.port=COM3 `
-  --robot.id=my_so_arm `
-  --robot.calibration_dir=./calibration/robots/so_follower `
-  --teleop.type=so101_leader `
-  --teleop.port=COM4 `
-  --teleop.id=my_so_arm `
-  --teleop.calibration_dir=./calibration/teleoperators/so_leader
-```
-
-### With cameras + Rerun viewer
-
-```powershell
-lerobot-teleoperate `
-  --robot.type=so101_follower `
-  --robot.port=COM3 `
-  --robot.id=my_so_arm `
-  --robot.calibration_dir=./calibration/robots/so_follower `
-  --robot.cameras="{gripper_cam: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, top_cam: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" `
-  --teleop.type=so101_leader `
-  --teleop.port=COM4 `
-  --teleop.id=my_so_arm `
-  --teleop.calibration_dir=./calibration/teleoperators/so_leader `
-  --display_data=true
-```
-
-Press **Ctrl+C** to stop. Rerun opens automatically when `--display_data=true`.
+**The motor-ID patch:** after a power cycle, the gripper (ID 6) and wrist_roll
+(ID 5) could both come back as ID 5 — a bus collision that reads as
+`Missing motor IDs: 5, 6`. STS3215 EEPROM has to be unlocked, written, then
+*re-locked* to commit; upstream did not always re-lock, so on some firmware
+batches the write silently reverted. Details in
+[`docs/windows-setup.md`](docs/windows-setup.md#motor-id-bug-and-fix).
 
 ---
 
-## Step 9 — Record a dataset (Hugging Face)
+## Running it
 
-One-time login:
+Hardware bring-up, calibration, and teleoperation:
+**[`docs/windows-setup.md`](docs/windows-setup.md)**.
 
-```powershell
-huggingface-cli login
-```
-
-Create a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
-
-Record demonstrations (both arms + cameras):
-
-```powershell
-lerobot-record `
-  --robot.type=so101_follower `
-  --robot.port=COM3 `
-  --robot.id=my_so_arm `
-  --robot.calibration_dir=./calibration/robots/so_follower `
-  --robot.cameras="{gripper_cam: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, top_cam: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" `
-  --teleop.type=so101_leader `
-  --teleop.port=COM4 `
-  --teleop.id=my_so_arm `
-  --teleop.calibration_dir=./calibration/teleoperators/so_leader `
-  --dataset.repo_id=YOUR_USERNAME/so101-pick-cube `
-  --dataset.num_episodes=30 `
-  --dataset.single_task="Pick up the cube and place it in the bowl"
-```
-
-- **Space** — start/stop each episode  
-- **Ctrl+C** — finish recording early  
-- Replace `YOUR_USERNAME/so101-pick-cube` with your Hub repo id  
-
-**Windows note:** Some dataset video features depend on `torchcodec`, which has limited Windows support in this repo’s pins. If recording fails on video encoding, check LeRobot issues or record without cameras first to isolate the problem.
-
----
-
-## Motor ID bug and fix
-
-**Problem:** After power cycle, gripper (ID 6) and wrist_roll (ID 5) can both appear as ID 5 → bus collision → `Missing motor IDs: 5, 6` during calibrate/teleop.
-
-**Cause:** STS3215 EEPROM must be unlocked (`Lock=0`), ID written, then **re-locked** (`Lock=1`). Stock LeRobot did not always re-lock, so some firmware batches did not commit ID 6.
-
-**Fix in this repo:** `src/lerobot/motors/motors_bus.py` writes `Lock=1` after ID and baud-rate assignment. `lerobot-setup-motors` and `fix_motor_ids.py` follow the same sequence.
-
-**Diagnose:** Run `python scan_motor_ids.py --port COM3`. If 5 and 6 are missing, disconnect wrist_roll only and scan again; if ID 5 appears alone, gripper likely reverted from 6 → 5.
-
-**If a servo still reverts:** Re-run `fix_motor_ids.py`, ensure stable power, then use **Feetech FD** tool (Windows) to update firmware, or replace the servo.
-
----
-
-## Troubleshooting (Windows)
-
-| Issue | What to try |
-|-------|-------------|
-| `Access is denied` on COM port | Close other apps using the port; unplug/replug; Device Manager → uninstall port → replug |
-| Port not listed | Install CH340/CP210x driver; try another USB port (USB 2.0 often more reliable) |
-| `Missing motor IDs: 5, 6` | [Step 4b](#step-4b--fix-motor-ids-optional) + [scan](#step-4--scan-motor-ids-sanity-check) |
-| Wrong arm moves / jitter | Re-calibrate with only one arm connected; confirm `COM` ports |
-| Camera index wrong | `lerobot-find-cameras`; swap `index_or_path` 0 and 1 in `--robot.cameras` |
-| `lerobot-*` not found | Activate `.venv` ([Step 2](#step-2--activate-the-environment-every-new-terminal)) |
-| PowerShell line breaks | Use backtick `` ` `` at end of line, or paste as one line |
-
-List all COM ports quickly:
-
-```powershell
-python -c "from serial.tools import list_ports; print([p.device for p in list_ports.comports()])"
-```
-
----
-
-## Upstream docs
-
-- [HuggingFace LeRobot](https://github.com/huggingface/lerobot)
-- Official SO-101 assembly: `src/lerobot/robots/so_follower/so101.md`
-- Extended notes: `so-arm-guide.md` (replace `/dev/cu.*` with `COMx` and `source .venv` with `.\.venv\Scripts\Activate.ps1`)
-
----
-
-## Quick reference
+Training and evaluation entry points once the arms are calibrated:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-python scan_motor_ids.py --port COM3
-lerobot-calibrate --robot.type=so101_follower --robot.port=COM3 --robot.id=my_so_arm
-lerobot-calibrate --teleop.type=so101_leader --teleop.port=COM4 --teleop.id=my_so_arm
-lerobot-teleoperate --robot.type=so101_follower --robot.port=COM3 --robot.id=my_so_arm --robot.calibration_dir=./calibration/robots/so_follower --teleop.type=so101_leader --teleop.port=COM4 --teleop.id=my_so_arm --teleop.calibration_dir=./calibration/teleoperators/so_leader --display_data=true
+
+.\scripts\train_act.ps1                          # ACT from scratch
+.\scripts\train_smolvla.ps1                      # SmolVLA finetune
+
+.\scripts\run_eval.ps1 -Mode fixed  -NumEpisodes 50
+.\scripts\run_eval.ps1 -Mode random -NumEpisodes 50 -Resume
+
+python scripts/measure_placement_error.py --calib-cm 11.5
 ```
+
+---
+
+## Status
+
+ACT is trained and fully scored on both protocols. SmolVLA is trained, offline
+metrics are measured, and its 100 physical trials are pending — the handover is
+in [`SmolVLA_training_report.md` §8](SmolVLA_training_report.md).
+
+The next experiment is the one the 0% points at: re-record demonstrations with
+randomized cube placement and re-run both protocols. Until that exists, the
+honest summary of this work is *92% at one position, and a measurement setup
+good enough to prove that's the ceiling.*
+
+---
+
+## License
+
+Apache 2.0, inherited from [LeRobot](https://github.com/huggingface/lerobot).
