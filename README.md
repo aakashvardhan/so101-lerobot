@@ -16,33 +16,38 @@ scored over 100 physical rollouts:
 
 | Protocol | Trials | Success | Grasp rate | Mean placement error |
 |---|---|---|---|---|
-| **Fixed** cube position | 50 | **92%** (46/50) | 92% | **2.49 cm** (successes only) |
-| **Randomized** cube position | 50 | **0%** (0/50) | 0% | n/a |
+| **Fixed** cube position | 50 scored | **92%** (46/50) | 92% | **2.49 cm** (successes only) |
+| **Randomized** cube position | 50 planned, not yet scored | pending | pending | pending |
 
 All four Fixed failures were no-grasp. Zero were grasped-then-dropped, and zero
 were placed in the wrong location. When the policy closed the gripper, it
 finished the task every time.
 
-**The 0% is the interesting number.** It is a dataset property, not a training
-failure, and the evaluation was built to be able to tell those apart.
+**The number that matters next is the randomized one**, and the reason is in the
+training data rather than the policy.
 
 ---
 
-## Why randomized position scored zero
+## Why the randomized protocol exists
 
-Before scoring the Random protocol I template-matched the first frame of all 50
-training episodes. Every demonstration starts the cube on the same paper marker,
-with under 1 cm of spread across the whole dataset.
+Before running it I template-matched the first frame of all 50 training
+episodes. Every demonstration starts the cube on the same paper marker, with
+under 1 cm of spread across the whole dataset.
 
-So the policy was never shown a cube anywhere else. What it learned is a
-near-open-loop trajectory to one location that happens to be where the cube
-always is, not a visually-conditioned grasp. It reproduces that trajectory at
-92% and generalizes to a moved cube at 0%.
+So the policy was never shown a cube anywhere else. What it most likely learned
+is a near-open-loop trajectory to one location that happens to be where the cube
+always is, rather than a visually-conditioned grasp. It reproduces that
+trajectory at 92%.
 
-That distinction only shows up if you evaluate off-distribution. A Fixed-only
-protocol would have reported 92% and called the policy solved. The fix is data
-collection, not more gradient steps: demonstrations with the cube deliberately
-scattered across the workspace.
+That is a hypothesis with a test attached. The randomized protocol places the
+cube at 50 measured offsets from the trained position, so it separates "the
+policy works" from "the policy memorized one trajectory." A Fixed-only protocol
+would have reported 92% and called the policy solved. The 50 randomized
+positions are generated and the harness is ready; the trials are not yet run.
+
+If the hypothesis holds, the fix is data collection rather than more gradient
+steps: demonstrations with the cube deliberately scattered across the
+workspace.
 
 The same class of problem bit the SmolVLA run from the other direction. A
 3-trial sanity check showed it stalling 11 to 51 s before initiating motion,
@@ -198,14 +203,15 @@ python scripts/measure_placement_error.py --calib-cm 11.5
 
 ## Status
 
-ACT is trained and fully scored on both protocols. SmolVLA is trained, offline
-metrics are measured, and its 100 physical trials are pending. The handover is
-in [`SmolVLA_training_report.md` §8](SmolVLA_training_report.md).
+ACT is trained and scored on the fixed protocol. Its randomized protocol is
+generated but not yet run. SmolVLA is trained, offline metrics are measured, and
+its physical trials are pending; the handover is in
+[`SmolVLA_training_report.md` §8](SmolVLA_training_report.md).
 
-The next experiment is the one the 0% points at: re-record demonstrations with
-randomized cube placement and re-run both protocols. Until that exists, the
-honest summary of this work is *92% at one position, and a measurement setup
-good enough to prove that's the ceiling.*
+The next experiment is the randomized run, followed by re-recording
+demonstrations with scattered cube placement if it confirms the data-coverage
+hypothesis. Until then, the honest summary of this work is *92% at one position,
+and a measurement setup built to find out whether that is the ceiling.*
 
 ---
 
